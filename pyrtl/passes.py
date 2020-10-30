@@ -14,6 +14,7 @@ from .corecircuits import (_basic_mult, _basic_add, _basic_sub, _basic_eq,
 from .memory import MemBlock
 from .pyrtlexceptions import PyrtlError, PyrtlInternalError
 from .wire import WireVector, Input, Output, Const, Register
+from .module import _ModInput, _ModOutput
 from .transform import net_transform, _get_new_block_mem_instance, copy_block, replace_wires
 from . import transform  # transform.all_nets looks better than all_nets
 
@@ -411,6 +412,9 @@ def synthesize(update_working_block=True, block=None):
                     new_wirevector = Const(bitwidth=1, val=new_val)
                 elif isinstance(wirevector, (Input, Output)):
                     new_wirevector = WireVector(name="tmp_" + new_name, bitwidth=1)
+                elif isinstance(wirevector, (_ModInput, _ModOutput)):
+                    new_wirevector = wirevector.__class__(name=new_name, bitwidth=1,
+                                                          module=wirevector.module)
                 else:
                     new_wirevector = wirevector.__class__(name=new_name, bitwidth=1)
                 wirevector_map[(wirevector, i)] = new_wirevector

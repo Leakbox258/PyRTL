@@ -261,6 +261,10 @@ class Block(object):
         self.legal_ops = set('w~&|^n+-*<>=xcsrm@')  # set of legal OPS
         self.rtl_assert_dict = {}   # map from wirevectors -> exceptions, used by rtl_assert
         self.memblock_by_name = {}  # map from name->memblock, for easy access to memblock objs
+        # module- and sort-related:
+        self.modules_by_name = {}  # map from name to modules (implies they must have unique names)
+        self.module_sorts = {}  # map from module class name -> {map from io.original_name -> sort}
+        self._current_module_stack = []  # a stack of current modules, so everyone knows owner
 
     def __str__(self):
         """String form has one LogicNet per line."""
@@ -292,6 +296,7 @@ class Block(object):
 
         self.sanity_check_net(net)
         self.logic.add(net)
+        # self.intermodular_check_net(net)  # Done at block-level via check_module_interconnections
 
     def _add_memblock(self, mem):
         """ Registers a memory to the block.
@@ -363,6 +368,146 @@ class Block(object):
             raise PyrtlError('error, block does not have a memblock named %s' % name)
         else:
             return None
+
+    def _add_module(self, module):
+        """ Registers a module to the block.
+
+        Note that this is done automatically when a module is
+        created and isn't intended for use by PyRTL end users.
+        """
+        mod_names_set = set(m.name for m in self.modules)
+        if module.name in mod_names_set:
+            raise PyrtlError('Module with name "%s" already exists.' % module.name)
+        self.modules_by_name[module.name] = module
+
+    @property
+    def modules(self):
+        return set(self.modules_by_name.values())
+
+    @property
+    def toplevel_modules(self):
+        return set(module for module in self.modules if module.supermodule is None)
+
+    @property
+    def current_module(self):
+        if self._current_module_stack:
+            return self._current_module_stack[-1]
+        else:
+            return None
+
+    def intermodular_check_net(self, net):
+        """ Check if this net causes a bad intermodular connection.
+
+            Right now, we only do this check on top-level net insertions,
+            since each module check its submodule interconnections after construction.
+
+            It is probably more efficient, though less helpful from a reporting
+            perspective, to just do the intermodular check for the top-level
+            block (if it's not in a module) before a simulation like is done
+            for detecting/reporting combinational loops already.
+
+            Raises a PyrtlError if detected.
+        """
+        from .wiresorts import find_bad_connection_from_module
+        from .module import _ModInput, _ModOutput
+
+        block = net.args[0]._block
+
+        if not block.toplevel_modules:
+            # Skip if there aren't any toplevel modules (i.e. a normal PyRTL design)
+            return
+
+        if block.current_module:
+            # We're in a module definition, and all intermodular checks between a module's
+            # submodules are done after the module has been fully instantiated.
+            return
+
+        src_map, dst_map = block.net_connections()
+
+        def creates_intermodular_connections(w, x):
+            from .wire import Const, Input, Output, Register
+            # This may be able to be combined with a refactored version of
+            # wiresorts._build_intermodular_reachability_maps. The difference with this and
+            # that is that the latter depends on knowing the set of modules beforehand, while
+            # here we're determining which modules we care about by seeing which are connected
+            # to the w and x wires, if any.
+
+            # Find the nearest module outputs to which w is combinationally-connected (backwards)
+            src_mods = set()
+            if w.module:
+                if not isinstance(w, _ModOutput):
+                    raise PyrtlInternalError(
+                        "Expected source wire owned by a module in a toplevel "
+                        "net connection to be a _ModOutput."
+                    )
+                src_mods.add(w.module)
+            else:
+                work_list = [w]
+                seen = set()
+                while work_list:
+                    s = work_list.pop()
+                    if s in seen:
+                        continue
+                    seen.add(s)
+
+                    if isinstance(s, Register):
+                        continue
+
+                    if isinstance(s, _ModInput):
+                        src_mods.add(s.module)
+
+                    if s not in src_map:
+                        continue
+
+                    for wire in src_map[s].args:
+                        work_list.append(wire)
+
+            # Find the nearest module inputs to which x is combinationally-connected (forwards)
+            dst_mods = set()
+            if x.module:
+                if not isinstance(x, _ModInput):
+                    raise PyrtlInternalError(
+                        "Expected dest wire owned by a module in a toplevel "
+                        "net connection to be a _ModInput."
+                    )
+                dst_mods.add(x.module)
+            else:
+                work_list = [x]
+                seen = set()
+                while work_list:
+                    a = work_list.pop()
+                    if a in seen:
+                        continue
+                    seen.add(a)
+
+                    if isinstance(a, Register):
+                        continue
+
+                    if isinstance(a, _ModOutput):
+                        dst_mods.add(a.module)
+
+                    if a not in dst_map:
+                        continue
+
+                    for net in dst_map[a]:
+                        for wire in net.dests:
+                            work_list.append(wire)
+
+            return src_mods if (src_mods and dst_mods) else set()
+
+        connections = [(arg, dest) for arg in net.args for dest in net.dests]
+        for arg, dest in connections:
+            src_mods = creates_intermodular_connections(arg, dest)
+            for src_mod in src_mods:
+                bad_conn = find_bad_connection_from_module(src_mod)
+                if bad_conn:
+                    (output, input) = bad_conn
+                    raise PyrtlError(
+                        'Connection error between "%s" (in "%s") and "%s" (in "%s"), '
+                        'caused by addition of net "%s".'
+                        % (str(output), output.module.name,
+                            str(input), input.module.name, str(net))
+                    )
 
     def wirevector_subset(self, cls=None, exclude=tuple()):
         """Return set of wirevectors, filtered by the type or tuple of types provided as cls.
@@ -503,6 +648,7 @@ class Block(object):
         # TODO: check that the wirevector_by_name is sane
         from .wire import Input, Const, Output
         from .helperfuncs import get_stack, get_stacks
+        from .wiresorts import check_module_interconnections
 
         # check for valid LogicNets (and wires)
         for net in self.logic:
@@ -555,6 +701,9 @@ class Block(object):
 
         # Check for async memories not specified as such
         self.sanity_check_memory_sync(wire_src_dict)
+
+        # Verify that all module interconnections are valid
+        check_module_interconnections()
 
         if debug_mode:
             # Check for wires that are destinations of a logicNet, but are not outputs and are never
@@ -620,8 +769,9 @@ class Block(object):
 
     def sanity_check_net(self, net):
         """ Check that net is a valid LogicNet. """
-        from .wire import Input, Output, Const, Register
+        from .wire import Input, Output, Const, WireVector, Register
         from .memory import _MemReadBase
+        from .module import _ModInput, _ModOutput
 
         # general sanity checks that apply to all operations
         if not isinstance(net, LogicNet):
@@ -720,6 +870,50 @@ class Block(object):
             raise PyrtlInternalError('error, upper bits of select output undefined')
         if net.op == 'm' and net.dests[0].bitwidth != net.op_param[1].bitwidth:
             raise PyrtlInternalError('error, mem read dest bitwidth mismatch')
+
+        # For each pair of (arg, dest) in the net, check if modular isolation is preserved
+        # based on the wires' owning modules. Skip if the design has no modules.
+        if not net.args[0]._block.modules:
+            return
+
+        def fail(arg, dest, reason):
+            raise PyrtlError('Invalid connection (%s -> %s). %s for these wire types.'
+                             % (str(arg), str(dest), reason))
+
+        # TODO probably need to verify memory's module is valid too...
+        # TODO also probably improve these error messages.
+        connections = [(arg, dest) for arg in net.args for dest in net.dests]
+        for arg, dest in connections:
+            if isinstance(arg, _ModInput):
+                if isinstance(dest, _ModInput):  # In -> In
+                    if arg.module != dest.module.supermodule:
+                        fail(arg, dest, "Argument must belong to supermodule of destination")
+                elif isinstance(dest, _ModOutput):  # In -> Out
+                    if arg.module != dest.module:
+                        fail(arg, dest, "Argument and destination must belong to same module")
+                else:  # In -> Wire
+                    if arg.module != dest.module:
+                        fail(arg, dest, "Argument and destination must belong to same module")
+            elif isinstance(arg, _ModOutput):
+                if isinstance(dest, _ModOutput):  # Out -> Out (incl. to internal)
+                    if (arg.module.supermodule != dest.module) and (arg.module != dest.module):
+                        fail(arg, dest, "Argument must belong to same or submodule of destination")
+                elif isinstance(dest, _ModInput):  # Out -> In
+                    if arg.module.supermodule != dest.module.supermodule:
+                        fail(arg, dest, "Argument and destination must be in the same supermodule")
+                else:  # Out -> Wire (incl. to internal)
+                    if (arg.module.supermodule != dest.module) and (arg.module != dest.module):
+                        fail(arg, dest, "Argument must belong to same or submodule of desitnation")
+            elif isinstance(arg, WireVector):
+                if isinstance(dest, _ModInput):  # Wire -> In
+                    if arg.module != dest.module.supermodule:
+                        fail(arg, dest, "Argument must belong to supermodule of destination")
+                elif isinstance(dest, _ModOutput):  # Wire -> Out
+                    if arg.module != dest.module:
+                        fail(arg, dest, "Argument and destination must belong to same module")
+                else:  # Wire -> Wire
+                    if arg.module != dest.module:
+                        fail(arg, dest, "Argument and destination must belong to same module")
 
 
 class PostSynthBlock(Block):

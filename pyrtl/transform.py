@@ -92,8 +92,10 @@ def replace_wire(orig_wire, new_src, new_dst, block=None):
                     new_net = LogicNet(
                         op=net.op, op_param=net.op_param, args=net.args,
                         dests=tuple(new_src if w is orig_wire else w for w in net.dests))
-                    block.add_net(new_net)
+                    # remove first, because 'add_net' does some checks that might rely
+                    # on the old net no longer existing.
                     block.logic.remove(net)
+                    block.add_net(new_net)
                     break
 
     if new_dst is not orig_wire:
@@ -103,8 +105,8 @@ def replace_wire(orig_wire, new_src, new_dst, block=None):
                     new_net = LogicNet(
                         op=net.op, op_param=net.op_param, dests=net.dests,
                         args=tuple(new_src if w is orig_wire else w for w in net.args))
-                    block.add_net(new_net)
                     block.logic.remove(net)
+                    block.add_net(new_net)
 
     if new_dst is not orig_wire and new_src is not orig_wire:
         block.remove_wirevector(orig_wire)
@@ -178,10 +180,16 @@ def clone_wire(old_wire, name=None):
     two wires are from different blocks. Making two wires with the
     same name in the same block is not allowed
     """
+    from .module import _ModInput, _ModOutput
+
     if isinstance(old_wire, Const):
         if name is None:
             return Const(old_wire.val, old_wire.bitwidth, name=old_wire.name)
         return Const(old_wire.val, old_wire.bitwidth, name=name)
+    elif isinstance(old_wire, (_ModInput, _ModOutput)):
+        if name is None:
+            return old_wire.__class__(old_wire.bitwidth, name=old_wire.name, module=old_wire.module)
+        return old_wire.__class__(old_wire.bitwidth, name=name, module=old_wire.module)
     else:
         if name is None:
             return old_wire.__class__(old_wire.bitwidth, name=old_wire.name)

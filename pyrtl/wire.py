@@ -115,6 +115,12 @@ class WireVector(object):
         self.name = next_tempvar_name(name)
         self._validate_bitwidth(bitwidth)
 
+        # Each module tracks which wires belong to it.
+        # 'None' means it's a top-level wire (not part of any module).
+        self.module = self._block.current_module
+        if self.module:
+            self.module.add_wire(self)
+
         if core._setting_keep_wirevector_call_stack:
             import traceback
             self.init_call_stack = traceback.format_stack()

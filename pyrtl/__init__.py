@@ -19,8 +19,17 @@ from .wire import Input, Output
 from .wire import Const
 from .wire import Register
 
-# helper functions
+# module
+from .module import Module
+from .module import module_from_block
+from .module import module_from_subcircuit
 
+# wire sorts
+from .wiresorts import ToSync, ToPort
+from .wiresorts import FromSync, FromPort
+from .wiresorts import check_module_interconnections
+
+# helper functions
 from .helperfuncs import input_list
 from .helperfuncs import output_list
 from .helperfuncs import register_list
@@ -64,7 +73,6 @@ from .corecircuits import shift_left_arithmetic
 from .corecircuits import shift_right_arithmetic
 from .corecircuits import shift_left_logical
 from .corecircuits import shift_right_logical
-
 
 # memory blocks
 from .memory import MemBlock

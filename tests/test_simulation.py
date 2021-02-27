@@ -129,6 +129,62 @@ class TraceWithBasicOpsBase(unittest.TestCase):
         self.check_trace(' r 00224466\nr2 02244660\n')
 
 
+class TraceWithFauxNetBase(unittest.TestCase):
+    def setUp(self):
+        pyrtl.reset_working_block()
+
+    def test_gcd_model(self):
+        def gcd(a, b):
+            while b != 0:
+                a, b = b, a % b
+            return a
+
+        a = pyrtl.Input(10, 'a')
+        b = pyrtl.Input(10, 'b')
+        c = pyrtl.Output(10, 'c')
+
+        pyrtl.fauxify(gcd, args=(a, b), dests=(c,), name='gcd', delay=45.0)
+
+        sim = pyrtl.Simulation()
+        sim.step_multiple({
+            'a': [10, 4, 21, 72, 55, 78],
+            'b': [25, 2, 14, 36, 33, 12]
+        })
+
+        correct_string = (
+            "--- Values in base 10 ---\n"
+            "a 10  4 21 72 55 78\n"
+            "b 25  2 14 36 33 12\n"
+            "c  5  2  7 36 11  6\n"
+        )
+        output = six.StringIO()
+        sim.tracer.print_trace(output)
+        self.assertEqual(output.getvalue(), correct_string)
+    
+    def test_adder_model(self):
+        a = pyrtl.Input(10, 'a')
+        b = pyrtl.Input(10, 'b')
+        c = pyrtl.Output(10, 'c')
+
+        pyrtl.fauxify(lambda x, y: x + y, args=(a, b), dests=(c,), name='add', delay=20.0)
+
+        sim = pyrtl.Simulation()
+        sim.step_multiple({
+            'a': [10, 4, 21, 72, 55, 78],
+            'b': [25, 2, 14, 36, 33, 12]
+        })
+
+        correct_string = (
+            "--- Values in base 10 ---\n"
+            "a  10   4  21  72  55  78\n"
+            "b  25   2  14  36  33  12\n"
+            "c  35   6  35 108  88  90\n"
+        )
+        output = six.StringIO()
+        sim.tracer.print_trace(output)
+        self.assertEqual(output.getvalue(), correct_string)
+
+
 class RenderTraceBase(unittest.TestCase):
     def setUp(self):
         pyrtl.reset_working_block()

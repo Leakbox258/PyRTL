@@ -70,7 +70,7 @@ class LogicNet(collections.namedtuple('LogicNet', ['op', 'op_param', 'args', 'de
                                                put it into data
         ('@', (memid, mem), (addr, data, wr_en), ()) => write data to mem (w/ id memid) at
                                                         address addr; req. write enable (wr_en)
-
+        ('f', FauxFunc, *args, *dsts) => a net whose meaning is defined by a pure Python function
     """
 
     def __str__(self):
@@ -259,7 +259,7 @@ class Block(object):
         self.wirevector_set = set()  # set of all wirevectors
         self.wirevector_by_name = {}  # map from name->wirevector, used for performance
         # pre-synthesis wirevectors to post-synthesis vectors
-        self.legal_ops = set('w~&|^n+-*<>=xcsrm@')  # set of legal OPS
+        self.legal_ops = set('w~&|^n+-*<>=xcsrm@f')  # set of legal OPS
         self.rtl_assert_dict = {}   # map from wirevectors -> exceptions, used by rtl_assert
         self.memblock_by_name = {}  # map from name->memblock, for easy access to memblock objs
 
@@ -762,6 +762,7 @@ class Block(object):
         if net.op == 'm' and net.dests[0].bitwidth != net.op_param[1].bitwidth:
             raise PyrtlInternalError('error, mem read dest bitwidth mismatch')
 
+        # TODO checks for 'f' net
 
 class PostSynthBlock(Block):
     """ This is a block with extra metadata required to maintain the

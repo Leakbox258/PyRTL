@@ -10,7 +10,7 @@ import six
 import sys
 from functools import reduce
 
-from .core import working_block, _NameIndexer, _get_debug_mode
+from .core import working_block, _NameIndexer, _get_debug_mode, LogicNet
 from .pyrtlexceptions import PyrtlError, PyrtlInternalError
 from .wire import WireVector, Input, Output, Const, Register
 from .corecircuits import as_wires, rtl_all, rtl_any, concat_list
@@ -867,6 +867,36 @@ def print_loop(loop_data):
         print('\n'.join("{}".format(fs.net) for fs in loop_data))
         # print '\n'.join("{} (dest wire: {})".format(fs.net, fs.dst_w) for fs in loop_info)
         print("")
+
+# This is stored in the op_param of an 'f' net.
+# 'delay' is time for signal to propagate to the output(s) of the model
+# 'area' is size taken up by the model
+# 'power' is power used by the model
+FauxFunc = collections.namedtuple('FauxFunc', ['func', 'name', 'delay', 'area', 'power'])
+
+def fauxify(f, args, dests, name='', block=None, **kwargs):
+    """
+    :param f: function modelling some behavior
+    :param args: list of WireVectors
+    :param dests: list of WireVectors
+    """
+    block = working_block(block)
+    fobj = FauxFunc(
+        func=f,
+        name=name,
+        delay=kwargs.get('delay'),
+        area=kwargs.get('area'),
+        power=kwargs.get('power')
+    )
+
+    block.add_net(
+        LogicNet(
+            op='f',
+            op_param=fobj,
+            args=args,
+            dests=dests
+        )
+    )
 
 
 def _currently_in_jupyter_notebook():

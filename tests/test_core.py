@@ -171,7 +171,7 @@ class TestSanityCheckNet(unittest.TestCase):
         net = self.new_net(args=(outp, outp))
         self.invalid_net("Outputs cannot be arguments", net)
 
-        wrong_ops = ('%', '!', 'a', 'f', '<<', '>>', '&&', '||', '==')
+        wrong_ops = ('%', '!', 'a', '<<', '>>', '&&', '||', '==')
         for op in wrong_ops:
             net = self.new_net(op=op)
             self.invalid_net("not from acceptable set", net)

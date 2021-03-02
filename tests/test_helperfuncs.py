@@ -1317,6 +1317,87 @@ class TestFauxify(unittest.TestCase):
             else:
                 assert(outv == ivals[ix - 1])
 
+    def test_memory_model_with_function(self):
+        def Memory():
+            contents = {}
+
+            def read(addr):
+                nonlocal contents
+                return contents.get(addr, 0)
+
+            def write(addr, data, wr_en):
+                nonlocal contents
+                if wr_en:
+                    contents[addr] = data
+
+            return read, write
+
+        r_addr, w_addr, w_data, wr_en = pyrtl.input_list('r_addr/10 w_addr/10 w_data/16 wr_en/1')
+        out_data = pyrtl.Output(16, 'out_data')
+
+        read, write = Memory()
+
+        pyrtl.fauxify(read, [r_addr], [out_data])
+        pyrtl.fauxify(write, [w_addr, w_data, wr_en], [])
+
+        sim_trace = pyrtl.SimulationTrace([out_data])
+        sim = pyrtl.Simulation(tracer=sim_trace)
+        sim.step_multiple({
+            'r_addr': [0, 1, 2, 3, 0, 5, 6],
+            'w_addr': [1, 2, 3, 0, 5, 6, 7],
+            'w_data': [42, 912, 93, 12, 3222, 123, 9],
+            'wr_en': [1, 1, 0, 1, 0, 1, 1],
+        })
+        output = six.StringIO()
+        correct_string = (
+            "     --- Values in base 10 ---\n"
+            "out_data   0  42 912   0  12   0 123\n"
+        )
+        sim_trace.print_trace(output)
+        self.assertEqual(output.getvalue(), correct_string)
+
+    def test_memory_model_with_class(self):
+        class Memory:
+            def __init__(self):
+                self.contents = {}
+
+            @property
+            def read(self):
+                def f(addr):
+                    return self.contents.get(addr, 0)
+                return f
+
+            @property
+            def write(self):
+                def f(addr, data, wr_en):
+                    if wr_en:
+                        self.contents[addr] = data
+                return f
+
+        mem = Memory()
+
+        r_addr, w_addr, w_data, wr_en = pyrtl.input_list('r_addr/10 w_addr/10 w_data/16 wr_en/1')
+        out_data = pyrtl.Output(16, 'out_data')
+
+        pyrtl.fauxify(mem.read, [r_addr], [out_data])
+        pyrtl.fauxify(mem.write, [w_addr, w_data, wr_en], [])
+
+        sim_trace = pyrtl.SimulationTrace([out_data])
+        sim = pyrtl.Simulation(tracer=sim_trace)
+        sim.step_multiple({
+            'r_addr': [0, 1, 2, 3, 0, 5, 6],
+            'w_addr': [1, 2, 3, 0, 5, 6, 7],
+            'w_data': [42, 912, 93, 12, 3222, 123, 9],
+            'wr_en': [1, 1, 0, 1, 0, 1, 1],
+        })
+        output = six.StringIO()
+        correct_string = (
+            "     --- Values in base 10 ---\n"
+            "out_data   0  42 912   0  12   0 123\n"
+        )
+        sim_trace.print_trace(output)
+        self.assertEqual(output.getvalue(), correct_string)
+
 
 class TestBundle(unittest.TestCase):
     def setUp(self):

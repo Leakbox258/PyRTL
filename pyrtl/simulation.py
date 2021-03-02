@@ -425,14 +425,19 @@ class Simulation(object):
             else:
                 result = self.memvalue[memid].get(read_addr, self.default_value)
         elif net.op == 'f':
-            # We allow this 'f' to return multiple outputs
             (f, *_info) = net.op_param
             res = f(*map(lambda i: self.value[i], net.args))
-            res = (res,) if not isinstance(res, tuple) else res
-            assert(len(res) == len(net.dests))
-            for o, r in zip(net.dests, res):
-                self.value[o] = self._sanitize(r, o)
-            return  # yes, return now
+            if res is None:
+                # We allow 'f' to return 0 outputs...
+                assert len(net.dests) == 0
+            else:
+                # ...or multiple outputs
+                res = (res,) if not isinstance(res, tuple) else res
+                assert(len(res) == len(net.dests))
+                for o, r in zip(net.dests, res):
+                    self.value[o] = self._sanitize(r, o)
+            # Return now because we've already update our N outputs
+            return
         else:
             raise PyrtlInternalError('error, unknown op type')
 

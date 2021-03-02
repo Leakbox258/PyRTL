@@ -89,7 +89,7 @@ class LogicNet(collections.namedtuple('LogicNet', ['op', 'op_param', 'args', 'de
             if self.op in '&|':
                 return "{} & \\leftarrow \\{} \\, - & {} {} \\\\".format(
                        lhs, self.op, rhs, options)
-            elif self.op in "wn+-*<>xcsr":
+            elif self.op in "wn+-*<>xcsrf":
                 return "{} & \\leftarrow {} \\, - & {} {} \\\\".format(
                        lhs, self.op, rhs, options)
             elif self.op in "=":
@@ -101,7 +101,6 @@ class LogicNet(collections.namedtuple('LogicNet', ['op', 'op_param', 'args', 'de
             elif self.op in "~":
                 return "{} & \\leftarrow \\sim \\, - & {} {} \\\\".format(
                        lhs, rhs, options)
-
             elif self.op in 'm@':
                 memid, memblock = self.op_param
                 extrainfo = 'memid=' + str(memid)
@@ -122,7 +121,7 @@ class LogicNet(collections.namedtuple('LogicNet', ['op', 'op_param', 'args', 'de
                 raise PyrtlInternalError('error, unknown op "%s"' % str(self.op))
 
         else:  # not in ipython
-            if self.op in 'w~&|^n+-*<>=xcsr':
+            if self.op in 'w~&|^n+-*<>=xcsrf':
                 options = ' ' + options if options else ''
                 return "{} <-- {} -- {}{}".format(lhs, self.op, rhs, options)
             elif self.op in 'm@':

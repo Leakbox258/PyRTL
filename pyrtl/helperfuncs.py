@@ -873,7 +873,13 @@ def print_loop(loop_data):
 # 'delay' is time for signal to propagate to the output(s) of the model
 # 'area' is size taken up by the model
 # 'power' is power used by the model
-FauxFunc = collections.namedtuple('FauxFunc', ['func', 'name', 'delay', 'area', 'power'])
+class FauxFunc(collections.namedtuple('FauxFunc', ['func', 'name', 'delay', 'area', 'power'])):
+    def __str__(self):
+        s = 'delay={}, area={}, power={}'.format(self.delay, self.area, self.power)
+        if self.name:
+            return 'name={}, {}'.format(self.name, s)
+        else:
+            return 'func={}, {}'.format(self.func.__name__, s)
 
 
 def fauxify(f, args, dests, name='', block=None, **kwargs):

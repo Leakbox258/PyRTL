@@ -160,7 +160,7 @@ class TraceWithFauxNetBase(unittest.TestCase):
         output = six.StringIO()
         sim.tracer.print_trace(output)
         self.assertEqual(output.getvalue(), correct_string)
-    
+
     def test_adder_model(self):
         a = pyrtl.Input(10, 'a')
         b = pyrtl.Input(10, 'b')

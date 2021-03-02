@@ -764,6 +764,7 @@ class Block(object):
 
         # TODO checks for 'f' net
 
+
 class PostSynthBlock(Block):
     """ This is a block with extra metadata required to maintain the
     pre-synthesis interface during post-synthesis.

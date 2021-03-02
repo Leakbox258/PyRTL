@@ -868,11 +868,13 @@ def print_loop(loop_data):
         # print '\n'.join("{} (dest wire: {})".format(fs.net, fs.dst_w) for fs in loop_info)
         print("")
 
+
 # This is stored in the op_param of an 'f' net.
 # 'delay' is time for signal to propagate to the output(s) of the model
 # 'area' is size taken up by the model
 # 'power' is power used by the model
 FauxFunc = collections.namedtuple('FauxFunc', ['func', 'name', 'delay', 'area', 'power'])
+
 
 def fauxify(f, args, dests, name='', block=None, **kwargs):
     """
@@ -893,8 +895,8 @@ def fauxify(f, args, dests, name='', block=None, **kwargs):
         LogicNet(
             op='f',
             op_param=fobj,
-            args=args,
-            dests=dests
+            args=tuple(args),
+            dests=tuple(dests)
         )
     )
 

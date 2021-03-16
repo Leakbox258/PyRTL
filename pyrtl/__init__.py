@@ -39,6 +39,7 @@ from .helperfuncs import check_rtl_assertions
 from .helperfuncs import find_loop
 from .helperfuncs import find_and_print_loop
 from .helperfuncs import fauxify
+from .helperfuncs import on_clock
 
 from .corecircuits import and_all_bits
 from .corecircuits import or_all_bits

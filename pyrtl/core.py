@@ -261,6 +261,7 @@ class Block(object):
         self.legal_ops = set('w~&|^n+-*<>=xcsrm@f')  # set of legal OPS
         self.rtl_assert_dict = {}   # map from wirevectors -> exceptions, used by rtl_assert
         self.memblock_by_name = {}  # map from name->memblock, for easy access to memblock objs
+        self.clocked_fs = set()  # set of functions in faux nets to activate on each clock tick
 
     def __str__(self):
         """String form has one LogicNet per line."""
@@ -292,6 +293,9 @@ class Block(object):
 
         self.sanity_check_net(net)
         self.logic.add(net)
+
+    def _add_on_clock(self, f):
+        self.clocked_fs.add(f)
 
     def _add_memblock(self, mem):
         """ Registers a memory to the block.

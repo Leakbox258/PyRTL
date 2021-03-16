@@ -1278,16 +1278,30 @@ class TestLoopDetection(unittest.TestCase):
 
 
 class TestFauxify(unittest.TestCase):
+
+    @staticmethod
+    def register(init):
+        q = init
+
+        def f(d):
+            def update():
+                nonlocal q
+                q = d
+            pyrtl.on_clock(update)
+            return q
+        return f
+
     def setUp(self):
         pyrtl.reset_working_block()
 
     def test_simulation_call_once_per_cycle(self):
         import random
+
         # The simulation should return the same value from fauxified net
         # for every place it is needed by another net during the same cycle.
         def f():
             return random.randint(1, 10)
-        
+
         o1, o2 = pyrtl.output_list('o1/4 o2/4')
         w = pyrtl.WireVector(4, 'w')
         pyrtl.fauxify(f, [], [w])
@@ -1302,7 +1316,23 @@ class TestFauxify(unittest.TestCase):
         self.assertTrue(all(n >= 1 and n <= 10 for n in o1_vals))
         self.assertEqual(o1_vals, o2_vals)
 
-    # TODO a faux function without any outputs
+    def test_simulation_no_outputs(self):
+        s = six.StringIO()
+        def f(x, y):
+            if x == y:
+                print("equal", file=s)
+            else:
+                print("unequal", file=s)
+        
+        i1, i2 = pyrtl.input_list('i1/3 i2/3')
+        pyrtl.fauxify(f, [i1, i2], [])
+        sim = pyrtl.Simulation()
+        sim.step_multiple({
+            'i1': [0, 0, 1, 3, 5],
+            'i2': [0, 1, 7, 3, 4],
+        })
+        correct_output = "equal\nunequal\nunequal\nequal\nunequal\n"
+        self.assertEqual(s.getvalue(), correct_output)
 
     def test_simulation_two_outputs(self):
         def div_mod(a, b):
@@ -1320,25 +1350,70 @@ class TestFauxify(unittest.TestCase):
         self.assertEqual(outvals[o1], expected_o1_outs)
         self.assertEqual(outvals[o2], expected_o2_outs)
 
-    def test_simulation_register(self):
-        def register(init):
-            q = init
-
-            def f(d):
-                nonlocal q
-                v, q = q, d
-                return v
-            return f
-
+    def test_simulation_register_no_feedback(self):
         i, ivals = utils.an_input_and_vals(10)
         o = pyrtl.Output(10, 'o')
-        pyrtl.fauxify(register(42), [i], [o])
+        pyrtl.fauxify(TestFauxify.register(42), [i], [o])
         ovals = utils.sim_and_ret_out(o, [i], [ivals])
         for ix, outv in enumerate(ovals):
             if ix == 0:
                 assert(outv == 42)
             else:
                 assert(outv == ivals[ix - 1])
+
+    def test_multiple_faux_reg_in_sequence(self):
+        i = pyrtl.Input(10, 'i')
+        o = pyrtl.Output(10, 'o')
+        w = pyrtl.WireVector(10)
+        pyrtl.fauxify(TestFauxify.register(11), [i], [w])
+        pyrtl.fauxify(TestFauxify.register(0), [w * 2], [o])
+
+        sim = pyrtl.Simulation()
+        sim.step_multiple({
+            'i': range(0, 10)
+        }, nsteps=10)
+        output = six.StringIO()
+        sim.tracer.print_trace(output)
+        assert(output.getvalue() == (
+            "--- Values in base 10 ---\n"
+            "i  0  1  2  3  4  5  6  7  8  9\n"
+            "o  0 22  0  2  4  6  8 10 12 14\n")
+        )
+
+    def test_faux_reg_to_real_reg_in_sequence(self):
+        i = pyrtl.Input(10, 'i')
+        o = pyrtl.Output(10, 'o')
+        w = pyrtl.WireVector(10)
+        pyrtl.fauxify(TestFauxify.register(11), [i], [w], name='reg_model')
+        r = pyrtl.Register(10)
+        r.next <<= w * 2
+        o <<= r
+
+        sim = pyrtl.Simulation()
+        sim.step_multiple({'i': range(0, 10)}, nsteps=10)
+        correct_output = (
+            "--- Values in base 10 ---\n"
+            "i  0  1  2  3  4  5  6  7  8  9\n"
+            "o  0 22  0  2  4  6  8 10 12 14\n"
+        )
+        output = six.StringIO()
+        sim.tracer.print_trace(output)
+        self.assertEqual(output.getvalue(), correct_output)
+
+    @unittest.skip("Need to fix so PyRTL doesn't complain about loops between clocked faux nets")
+    def test_faux_reg_in_loop(self):
+        i = pyrtl.Input(10, 'i')
+        o = pyrtl.Output(10, 'o')
+        r1, r2 = pyrtl.wirevector_list('r1/10 r2/10')
+        pyrtl.fauxify(TestFauxify.register(0), [i + r2], [r1])
+        pyrtl.fauxify(TestFauxify.register(0), [r1 * 2], [r2])
+        o <<= r2
+
+        sim = pyrtl.Simulation()
+        sim.step_multiple({
+            'i': range(1, 11)
+        }, nsteps=10)
+        sim.tracer.render_trace()
 
     def test_memory_model_with_function(self):
         def Memory():

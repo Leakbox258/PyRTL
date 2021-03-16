@@ -907,6 +907,10 @@ def fauxify(f, args, dests, name='', block=None, **kwargs):
     )
 
 
+def on_clock(thunk):
+    working_block()._add_on_clock(thunk)
+
+
 def _currently_in_jupyter_notebook():
     """ Return true if running under Jupyter notebook, otherwise return False.
 

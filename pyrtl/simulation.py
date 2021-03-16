@@ -243,6 +243,12 @@ class Simulation(object):
             argval = self.value[net.args[0]]
             self.regvalue[net.dests[0]] = self._sanitize(argval, net.dests[0])
 
+        # Tick all the clocked update functions used in faux nets
+        fs = self.block.clocked_fs.copy()
+        self.block.clocked_fs.clear()
+        for clocked_f in fs:
+            clocked_f()
+
         # Prepare faux funcs for next cycle
         self.faux_func_activated = {n: False for n in self.block.logic_subset('f')}
 

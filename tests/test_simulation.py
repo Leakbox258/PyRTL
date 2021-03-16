@@ -183,6 +183,33 @@ class TraceWithFauxNetBase(unittest.TestCase):
         output = six.StringIO()
         sim.tracer.print_trace(output)
         self.assertEqual(output.getvalue(), correct_string)
+    
+    def test_counter_model(self):
+        def counter(n):
+            curr = 0
+            def f():
+                def update():
+                    nonlocal curr
+                    if curr == (n - 1):
+                        curr = 0
+                    else:
+                        curr = curr + 1
+                pyrtl.on_clock(update)
+                return curr
+            return f
+
+        o = pyrtl.Output(10, 'o')
+        pyrtl.fauxify(counter(5), [], [o])
+        sim = pyrtl.Simulation()
+        sim.step_multiple(nsteps=11)
+
+        correct_string = (
+            '--- Values in base 10 ---\n'
+            'o 0 1 2 3 4 0 1 2 3 4 0\n'
+        )
+        output = six.StringIO()
+        sim.tracer.print_trace(output)
+        self.assertEqual(output.getvalue(), correct_string)
 
 
 class RenderTraceBase(unittest.TestCase):

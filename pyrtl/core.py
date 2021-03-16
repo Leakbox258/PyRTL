@@ -497,17 +497,25 @@ class Block(object):
         """
         from .wire import Input, Const, Register
         src_dict, dest_dict = self.net_connections()
-        to_clear = self.wirevector_subset((Input, Const, Register))
+        to_clear = self.wirevector_subset((Input, Const, Register))  # TODO add FauxGiving wires here instead
         cleared = set()
         remaining = self.logic.copy()
 
-        # Faux functions without inputs are essentially like constant generators,
-        # without actually being Consts, so need to handle specially.
-        for gate in self.logic_subset(op='f'):
-            if len(gate.args) == 0:
+        # Faux nets without inputs are essentially like constant generators, which are Giving.
+        # This should be okay to do, since it has no input dependencies.
+        for gate in self.logic.copy():
+            if gate.op == 'f' and len(gate.args) == 0:  # TODO maybe if all args are giving, remove from remaining
                 yield gate
                 remaining.remove(gate)
+                #assert(all(hasattr(w, "giving") for w in gate.dests))
                 to_clear.update(gate.dests)
+
+        # Likewise, any outputs that come from updateable state in a faux net are Giving, need
+        # to add them explicitly in the cases for faux nets with arguments. These may have been
+        # removed in the above loop in the above's special case.
+        for w in self.wirevector_subset(exclude=(Input, Const, Register)):
+            if hasattr(w, "giving"):
+                to_clear.add(w)
 
         try:
             while len(to_clear):
@@ -519,7 +527,8 @@ class Block(object):
                             yield gate
                             remaining.remove(gate)
                             if gate.op != 'r':
-                                to_clear.update(gate.dests)
+                                # Only add non-giving wires (handles the outputs of faux nets appropriately) TODO check out how this works when we label *all* wires with one of these sorts
+                                to_clear.update(set(d for d in gate.dests if not hasattr(d, "giving")))
         except KeyError as e:
             import six
             six.raise_from(PyrtlError("Cannot Iterate through malformed block"), e)

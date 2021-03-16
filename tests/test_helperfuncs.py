@@ -1304,6 +1304,7 @@ class TestFauxify(unittest.TestCase):
 
         o1, o2 = pyrtl.output_list('o1/4 o2/4')
         w = pyrtl.WireVector(4, 'w')
+        setattr(w, 'giving', True)  # TODO add an official way to do this, like done in WireSorts paper
         pyrtl.fauxify(f, [], [w])
         o1 <<= w
         o2 <<= w
@@ -1384,6 +1385,7 @@ class TestFauxify(unittest.TestCase):
         i = pyrtl.Input(10, 'i')
         o = pyrtl.Output(10, 'o')
         w = pyrtl.WireVector(10)
+        #setattr(w, 'giving', True)  # TODO make a special wire type
         pyrtl.fauxify(TestFauxify.register(11), [i], [w], name='reg_model')
         r = pyrtl.Register(10)
         r.next <<= w * 2
@@ -1400,20 +1402,34 @@ class TestFauxify(unittest.TestCase):
         sim.tracer.print_trace(output)
         self.assertEqual(output.getvalue(), correct_output)
 
-    @unittest.skip("Need to fix so PyRTL doesn't complain about loops between clocked faux nets")
     def test_faux_reg_in_loop(self):
-        i = pyrtl.Input(10, 'i')
-        o = pyrtl.Output(10, 'o')
-        r1, r2 = pyrtl.wirevector_list('r1/10 r2/10')
-        pyrtl.fauxify(TestFauxify.register(0), [i + r2], [r1])
-        pyrtl.fauxify(TestFauxify.register(0), [r1 * 2], [r2])
-        o <<= r2
+        def build(fauxified=False):
+            i = pyrtl.Input(10, 'i')
+            o = pyrtl.Output(10, 'o')
+            if fauxified:
+                r1, r2 = pyrtl.wirevector_list('r1/10 r2/10')
+                setattr(r1, 'giving', True)  # TODO make a special wire type
+                setattr(r2, 'giving', True)  # TODO make a special wire type
+                pyrtl.fauxify(TestFauxify.register(0), [i + r2], [r1])
+                pyrtl.fauxify(TestFauxify.register(0), [r1 * 2], [r2])
+            else:
+                r1, r2 = pyrtl.register_list('r1/10 r2/10')
+                r1.next <<= i + r2
+                r2.next <<= r1 * 2
+            o <<= r2
 
-        sim = pyrtl.Simulation()
-        sim.step_multiple({
-            'i': range(1, 11)
-        }, nsteps=10)
-        sim.tracer.render_trace()
+            sim = pyrtl.Simulation()
+            sim.step_multiple({'i': range(1, 11)}, nsteps=10)
+            output = six.StringIO()
+            sim.tracer.print_trace(output)
+            return output.getvalue()
+        
+        # expected = build()
+        # pyrtl.reset_working_block()
+        actual = build(fauxified=True)
+        # self.assertEqual(expected, actual)
+    
+    # TODO test with faux net returning a Giving output and a combinational output
 
     def test_memory_model_with_function(self):
         def Memory():

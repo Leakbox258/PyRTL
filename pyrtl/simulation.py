@@ -168,6 +168,7 @@ class Simulation(object):
         self.reg_update_nets = tuple((self.block.logic_subset('r')))
         self.mem_update_nets = tuple((self.block.logic_subset('@')))
         self.faux_func_activated = {n: False for n in self.block.logic_subset('f')}
+        # TODO insert a way to track the faux_updates here, like done for reg_update_nets
 
         self.tracer._set_initial_values(self.default_value, self.regvalue.copy(),
                                         copy.deepcopy(self.memvalue))
@@ -244,12 +245,13 @@ class Simulation(object):
             self.regvalue[net.dests[0]] = self._sanitize(argval, net.dests[0])
 
         # Tick all the clocked update functions used in faux nets
-        fs = self.block.clocked_fs.copy()
+        fs = self.block.clocked_fs.copy()  # TODO the fact that I'm relying on changing something in the block is ugly
         self.block.clocked_fs.clear()
         for clocked_f in fs:
+            # TODO I should be storing the values for these clocked vlaues in self.value
             clocked_f()
 
-        # Prepare faux funcs for next cycle
+        # Prepare faux nets for next cycle
         self.faux_func_activated = {n: False for n in self.block.logic_subset('f')}
 
         # finally, if any of the rtl_assert assertions are failing then we should

@@ -1281,6 +1281,29 @@ class TestFauxify(unittest.TestCase):
     def setUp(self):
         pyrtl.reset_working_block()
 
+    def test_simulation_call_once_per_cycle(self):
+        import random
+        # The simulation should return the same value from fauxified net
+        # for every place it is needed by another net during the same cycle.
+        def f():
+            return random.randint(1, 10)
+        
+        o1, o2 = pyrtl.output_list('o1/4 o2/4')
+        w = pyrtl.WireVector(4, 'w')
+        pyrtl.fauxify(f, [], [w])
+        o1 <<= w
+        o2 <<= w
+
+        sim_trace = pyrtl.SimulationTrace()
+        sim = pyrtl.Simulation(tracer=sim_trace)
+        sim.step_multiple(nsteps=5)
+        o1_vals = sim_trace.trace[o1]
+        o2_vals = sim_trace.trace[o2]
+        self.assertTrue(all(n >= 1 and n <= 10 for n in o1_vals))
+        self.assertEqual(o1_vals, o2_vals)
+
+    # TODO a faux function without any outputs
+
     def test_simulation_two_outputs(self):
         def div_mod(a, b):
             return a // b, a % b

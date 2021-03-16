@@ -167,6 +167,7 @@ class Simulation(object):
         self.ordered_nets = tuple((i for i in self.block))
         self.reg_update_nets = tuple((self.block.logic_subset('r')))
         self.mem_update_nets = tuple((self.block.logic_subset('@')))
+        self.faux_func_activated = {n: False for n in self.block.logic_subset('f')}
 
         self.tracer._set_initial_values(self.default_value, self.regvalue.copy(),
                                         copy.deepcopy(self.memvalue))
@@ -241,6 +242,9 @@ class Simulation(object):
         for net in self.reg_update_nets:
             argval = self.value[net.args[0]]
             self.regvalue[net.dests[0]] = self._sanitize(argval, net.dests[0])
+
+        # Prepare faux funcs for next cycle
+        self.faux_func_activated = {n: False for n in self.block.logic_subset('f')}
 
         # finally, if any of the rtl_assert assertions are failing then we should
         # raise the appropriate exceptions
@@ -425,18 +429,20 @@ class Simulation(object):
             else:
                 result = self.memvalue[memid].get(read_addr, self.default_value)
         elif net.op == 'f':
-            (f, *_info) = net.op_param
-            res = f(*map(lambda i: self.value[i], net.args))
-            if res is None:
-                # We allow 'f' to return 0 outputs...
-                assert len(net.dests) == 0
-            else:
-                # ...or multiple outputs
-                res = (res,) if not isinstance(res, tuple) else res
-                assert(len(res) == len(net.dests))
-                for o, r in zip(net.dests, res):
-                    self.value[o] = self._sanitize(r, o)
-            # Return now because we've already update our N outputs
+            if not self.faux_func_activated[net]:
+                (f, *_info) = net.op_param
+                res = f(*map(lambda i: self.value[i], net.args))
+                if res is None:
+                    # We allow 'f' to return 0 outputs...
+                    assert len(net.dests) == 0
+                else:
+                    # ...or multiple outputs
+                    res = (res,) if not isinstance(res, tuple) else res
+                    assert(len(res) == len(net.dests))
+                    for o, r in zip(net.dests, res):
+                        self.value[o] = self._sanitize(r, o)
+                self.faux_func_activated[net] = True
+            # Return now because we've already updated our N outputs
             return
         else:
             raise PyrtlInternalError('error, unknown op type')

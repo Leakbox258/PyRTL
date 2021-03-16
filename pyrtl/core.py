@@ -496,6 +496,15 @@ class Block(object):
         to_clear = self.wirevector_subset((Input, Const, Register))
         cleared = set()
         remaining = self.logic.copy()
+
+        # Faux functions without inputs are essentially like constant generators,
+        # without actually being Consts, so need to handle specially.
+        for gate in self.logic_subset(op='f'):
+            if len(gate.args) == 0:
+                yield gate
+                remaining.remove(gate)
+                to_clear.update(gate.dests)
+
         try:
             while len(to_clear):
                 wire_to_check = to_clear.pop()

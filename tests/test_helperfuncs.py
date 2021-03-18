@@ -1280,15 +1280,17 @@ class TestLoopDetection(unittest.TestCase):
 class TestFauxify(unittest.TestCase):
 
     @staticmethod
-    def register(init):
+    def register(init, s=""):
         q = init
 
         def f(d):
             def update():
                 nonlocal q
+                print(f"Updating output {s} to be {d}")
                 q = d
-            pyrtl.on_clock(update)
-            return q
+                #return q  # Return the new state value (TODO see if I need to do this)
+            pyrtl.on_clock(update)  # Need a way to associate each update with the output associated with it, if any?
+            return q  # Return the old one
         return f
 
     def setUp(self):
@@ -1300,14 +1302,16 @@ class TestFauxify(unittest.TestCase):
         # The simulation should return the same value from fauxified net
         # for every place it is needed by another net during the same cycle.
         def f():
-            return random.randint(1, 10)
+            x = random.randint(1, 10)
+            return x, x
 
         o1, o2 = pyrtl.output_list('o1/4 o2/4')
-        w = pyrtl.WireVector(4, 'w')
-        setattr(w, 'giving', True)  # TODO add an official way to do this, like done in WireSorts paper
-        pyrtl.fauxify(f, [], [w])
-        o1 <<= w
-        o2 <<= w
+        w1, w2 = pyrtl.wirevector_list('w1/4 w2/4')
+        setattr(w1, 'giving', True)  # TODO add an official way to do this, like done in WireSorts paper
+        setattr(w2, 'giving', True)  # TODO add an official way to do this, like done in WireSorts paper
+        pyrtl.fauxify(f, [], [w1, w2])
+        o1 <<= w1
+        o2 <<= w2
 
         sim_trace = pyrtl.SimulationTrace()
         sim = pyrtl.Simulation(tracer=sim_trace)
@@ -1410,8 +1414,8 @@ class TestFauxify(unittest.TestCase):
                 r1, r2 = pyrtl.wirevector_list('r1/10 r2/10')
                 setattr(r1, 'giving', True)  # TODO make a special wire type
                 setattr(r2, 'giving', True)  # TODO make a special wire type
-                pyrtl.fauxify(TestFauxify.register(0), [i + r2], [r1])
-                pyrtl.fauxify(TestFauxify.register(0), [r1 * 2], [r2])
+                pyrtl.fauxify(TestFauxify.register(0, "r1"), [i + r2], [r1])
+                pyrtl.fauxify(TestFauxify.register(0, "r2"), [r1 * 2], [r2])
             else:
                 r1, r2 = pyrtl.register_list('r1/10 r2/10')
                 r1.next <<= i + r2
@@ -1425,8 +1429,10 @@ class TestFauxify(unittest.TestCase):
             return output.getvalue()
         
         # expected = build()
+        # print(expected)
         # pyrtl.reset_working_block()
         actual = build(fauxified=True)
+        print(actual)
         # self.assertEqual(expected, actual)
     
     # TODO test with faux net returning a Giving output and a combinational output

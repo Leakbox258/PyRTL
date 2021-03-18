@@ -108,6 +108,7 @@ class Simulation(object):
         self.value = {}  # map from signal->value
         self.regvalue = {}  # map from register->value on next tick
         self.memvalue = {}  # map from {memid :{address: value}}
+        self.faux_giving_value = {}  # map from FauxGiving->value on next tick
         self.block = block
         self.default_value = default_value
         if tracer is True:
@@ -192,6 +193,7 @@ class Simulation(object):
 
         to simulate a cycle with values 1 and 23 respectively.
         """
+        print("New cycle")
 
         # Check that all Input have a corresponding provided_input
         input_set = self.block.wirevector_subset(Input)
@@ -248,8 +250,13 @@ class Simulation(object):
         fs = self.block.clocked_fs.copy()  # TODO the fact that I'm relying on changing something in the block is ugly
         self.block.clocked_fs.clear()
         for clocked_f in fs:
-            # TODO I should be storing the values for these clocked vlaues in self.value
             clocked_f()
+        
+        # For all FauxGiving wires, remember them for use at the start of the next cycle
+        # for w in self.wirevector_subset():
+        #     if hasattr(w, "giving"):
+        #     self.faux_giving_value[w] = self.
+        #         self.value[]
 
         # Prepare faux nets for next cycle
         self.faux_func_activated = {n: False for n in self.block.logic_subset('f')}
@@ -437,19 +444,19 @@ class Simulation(object):
             else:
                 result = self.memvalue[memid].get(read_addr, self.default_value)
         elif net.op == 'f':
-            if not self.faux_func_activated[net]:
-                (f, *_info) = net.op_param
-                res = f(*map(lambda i: self.value[i], net.args))
-                if res is None:
-                    # We allow 'f' to return 0 outputs...
-                    assert len(net.dests) == 0
-                else:
-                    # ...or multiple outputs
-                    res = (res,) if not isinstance(res, tuple) else res
-                    assert(len(res) == len(net.dests))
-                    for o, r in zip(net.dests, res):
-                        self.value[o] = self._sanitize(r, o)
-                self.faux_func_activated[net] = True
+            # if not self.faux_func_activated[net]:  # I don't think this is needed, based on the way iteration over the block works (no revisiting node twice in cycle)
+            (f, *_info) = net.op_param
+            res = f(*map(lambda i: self.value[i], net.args))
+            if res is None:
+                # We allow 'f' to return 0 outputs...
+                assert len(net.dests) == 0
+            else:
+                # ...or multiple outputs
+                res = (res,) if not isinstance(res, tuple) else res
+                assert(len(res) == len(net.dests))
+                for o, r in zip(net.dests, res):
+                    self.value[o] = self._sanitize(r, o)  # NOTE: I don't think it makes sense to check for and save Giving output here; do like the registers
+            #    self.faux_func_activated[net] = True
             # Return now because we've already updated our N outputs
             return
         else:

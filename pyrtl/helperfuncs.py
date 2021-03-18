@@ -908,6 +908,7 @@ def fauxify(f, args, dests, name='', block=None, **kwargs):
 
 
 def on_clock(thunk):
+    # Perhaps it would be good to store the FauxNet this is a part of
     working_block()._add_on_clock(thunk)
 
 

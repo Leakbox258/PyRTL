@@ -9,17 +9,21 @@ accordingly, or write information from the Block out to the file.
 from __future__ import print_function, unicode_literals
 import re
 import collections
+from abc import ABCMeta, abstractmethod
 
 from .pyrtlexceptions import PyrtlError, PyrtlInternalError
 from .core import working_block, _NameSanitizer
 from .wire import WireVector, Input, Output, Const, Register
-from .corecircuits import concat_list
+from .corecircuits import concat_list, mux, rtl_all, rtl_any, tree_reduce
+from .corecircuits import shift_left_logical, shift_left_arithmetic
+from .corecircuits import shift_right_logical, shift_right_arithmetic
 from .memory import RomBlock
 from .passes import two_way_concat, one_bit_selects
 
 
 class Subcircuit:
     """
+    This represents an **instantiation** of a model.
     This is a way to create and track per-module-instance wire names, so there
     are not name clashes when we instantiate a module more than once.
     """
@@ -41,7 +45,7 @@ class Subcircuit:
         self.outputs[original_name] = wire
         self.wirevector_by_name[original_name] = wire
 
-    def add_reg(self, original_name, wire):
+    def add_wirevector(self, original_name, wire):
         self.wirevector_by_name[original_name] = wire
 
     def add_clock(self, clock_name):
@@ -55,6 +59,44 @@ class Subcircuit:
             s = WireVector(bitwidth=1)
             self.wirevector_by_name[x] = s
         return s
+
+
+class Model(metaclass=ABCMeta):
+    @abstractmethod
+    def input_names(self):
+        pass
+
+    @abstractmethod
+    def output_names(self):
+        pass
+
+
+class UserModel(Model):
+    def __init__(self, model):
+        self.model = model  # PyParsing object
+
+    @property
+    def input_names(self):
+        return self.model['input_list']
+
+    @property
+    def output_names(self):
+        return self.model['output_list']
+
+
+class BuiltInModel(Model):
+    def __init__(self, model_name, ext_inputs, ext_outputs):
+        self.model_name = model_name
+        self.ext_inputs = ext_inputs  # {A: A[0]...A[5], B: B[0],...B[5], etc.}
+        self.ext_outputs = ext_outputs  # {Y: Y[0]...Y[5], etc.}
+
+    @property
+    def input_names(self):
+        return [i for vals in self.ext_inputs.values() for i in vals]
+
+    @property
+    def output_names(self):
+        return [o for vals in self.ext_outputs.values() for o in vals]
 
 # -----------------------------------------------------------------
 #            __       ___
@@ -159,20 +201,35 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
     models = {}  # model name -> model, for subckt instantiation
 
     def extract_inputs(subckt):
-        if subckt.is_top:
+        is_builtin = isinstance(subckt.model, BuiltInModel)
+        if subckt.is_top or is_builtin:
             # NOTE: Assumes that:
             # - Top-level inputs starting with the same prefix are part of the same wire
             # - Indices start at 0
-            start_names = [re.sub(r'\[([0-9]+)\]$', '', x) for x in subckt.model['input_list']]
+            start_names = [re.sub(r'\[([0-9]+)\]$', '', x) for x in subckt.model.input_names]
             name_counts = collections.Counter(start_names)
             for input_name in name_counts:
                 bitwidth = name_counts[input_name]
                 if input_name in subckt.clk_set:
                     continue
                 elif bitwidth == 1:
-                    wire_in = Input(bitwidth=1, name=input_name, block=block)
+                    if is_builtin:
+                        wire_in = WireVector(bitwidth=1, block=block)
+                    else:
+                        wire_in = Input(bitwidth=1, name=input_name, block=block)
                     subckt.add_input(input_name, wire_in)
-                    block.add_wirevector(wire_in)
+                elif is_builtin:  # Always merge io vectors for builtins
+                    # We're actually taking all of the 1-bit inputs, and concatenating
+                    # them into an N-bit wirevector for use by the internal PyRTL op.
+                    wire_in = WireVector(bitwidth=bitwidth, block=block)
+                    subckt.add_wirevector(input_name, wire_in)  # Will need to retrieve later
+                    bit_list = []
+                    for i in range(bitwidth):
+                        bit_name = input_name + '[' + str(i) + ']'
+                        bit_wire = WireVector(bitwidth=1, block=block)
+                        bit_list.append(bit_wire)
+                        subckt.add_input(bit_name, bit_wire)
+                    wire_in <<= concat_list(bit_list)
                 elif merge_io_vectors:
                     wire_in = Input(bitwidth=bitwidth, name=input_name, block=block)
                     for i in range(bitwidth):
@@ -185,24 +242,23 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
                         bit_name = input_name + '[' + str(i) + ']'
                         wire_in = Input(bitwidth=1, name=bit_name, block=block)
                         subckt.add_input(bit_name, wire_in)
-                        block.add_wirevector(wire_in)
         else:
             # For subckts:
             # - Never merge input vectors
             # - All inputs are 1-bit
-            for input_name in subckt.model['input_list']:
+            for input_name in subckt.model.input_names:
                 if input_name in subckt.clk_set:
                     continue
                 wire_in = WireVector(bitwidth=1, block=block)  # Internal name prevents name clash
                 subckt.add_input(input_name, wire_in)
-                block.add_wirevector(wire_in)
 
     def extract_outputs(subckt):
-        if subckt.is_top:
+        is_builtin = isinstance(subckt.model, BuiltInModel)
+        if subckt.is_top or is_builtin:
             # NOTE: Assumes that:
             # - Top-level outputs starting with the same prefix are part of the same wire
             # - Indices start at 0
-            start_names = [re.sub(r'\[([0-9]+)\]$', '', x) for x in subckt.model['output_list']]
+            start_names = [re.sub(r'\[([0-9]+)\]$', '', x) for x in subckt.model.output_names]
             name_counts = collections.Counter(start_names)
             for output_name in name_counts:
                 bitwidth = name_counts[output_name]
@@ -215,12 +271,22 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
                 # the only thing that changes is what underlying wire is used.
                 if bitwidth == 1:
                     bit_internal = WireVector(bitwidth=1, block=block)
-                    bit_out = Output(bitwidth=1, name=output_name, block=block)
-                    bit_out <<= bit_internal
+                    if not is_builtin:
+                        bit_out = Output(bitwidth=1, name=output_name, block=block)
+                        bit_out <<= bit_internal
                     # NOTE this is important: redirecting user-visible name to internal wire
                     subckt.add_output(output_name, bit_internal)
+                elif is_builtin:  # Always merge io vectors for builtins
+                    wire_out = WireVector(bitwidth=bitwidth, block=block)
+                    subckt.add_wirevector(output_name, wire_out)  # Will need to retrieve later
+                    for i in range(bitwidth):
+                        bit_name = output_name + '[' + str(i) + ']'
+                        bit_wire = WireVector(bitwidth=1, block=block)
+                        bit_wire <<= wire_out[i]
+                        subckt.add_output(bit_name, bit_wire)
                 elif merge_io_vectors:
                     wire_out = Output(bitwidth=bitwidth, name=output_name, block=block)
+
                     bit_list = []
                     for i in range(bitwidth):
                         bit_name = output_name + '[' + str(i) + ']'
@@ -240,14 +306,14 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
             # For subckts:
             # - Never merge outputs vectors
             # - All outputs are 1-bit
-            for output_name in subckt.model['output_list']:
+            for output_name in subckt.model.output_names:
                 bit_out = WireVector(bitwidth=1, block=block)
-                block.add_wirevector(bit_out)
                 subckt.add_output(output_name, bit_out)
 
     def extract_commands(subckt):
+        assert(isinstance(subckt.model, UserModel))
         # for each "command" (dff or net) in the model
-        for command in subckt.model['command_list']:
+        for command in subckt.model.model['command_list']:
             # if it is a net (specified as a cover)
             if command.getName() == 'name_def':
                 extract_cover(subckt, command)
@@ -319,7 +385,7 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
         # Create register and assign next state to D and output to Q
         regname = command['Q'] + '_reg'
         flop = Register(bitwidth=1)
-        subckt.add_reg(regname, flop)
+        subckt.add_wirevector(regname, flop)
         flop.next <<= twire(command['D'])
         flop_output = twire(command['Q'])
         init_val = command['I']
@@ -331,6 +397,46 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
                              "For finer control over the initial value, use specialized reset "
                              "logic.")
         flop_output <<= flop
+
+    def get_model(command):
+
+        def get_external_io(input_names, output_names):
+            # For Python 2.7, I don't think dicts are ordered by default
+            inputs = collections.OrderedDict()
+            outputs = collections.OrderedDict()
+            formals = [fa['formal'] for fa in command['formal_actual_list']]
+            for i in input_names:
+                inputs[i] = [p for p in formals if p.startswith(i)]
+            for o in output_names:
+                outputs[o] = [p for p in formals if p.startswith(o)]
+            return inputs, outputs
+
+        model_name = command['model_name']
+        if model_name in models:
+            return models[model_name]
+        else:
+            # NOTE: Not sure if we can save these in the models dictionary, since
+            #       they differ by the number of internal wires (i.e. bitwidth).
+            if model_name in [
+                '$not', '$pos', '$neg',
+                '$reduce_and', '$reduce_or', '$reduce_xor', '$reduce_xnor',
+                '$reduce_bool', '$logic_not'
+            ]:
+                inputs, outputs = get_external_io(['A'], ['Y'])
+            elif model_name in [
+                '$and', '$or', '$xor', '$xnor',
+                '$shl', '$shr', '$sshl', '$sshr',
+                '$logic_and', '$logic_or', '$eqx', '$nex',
+                '$lt', '$le', '$eq', '$ne', '$ge', '$gt',
+                '$add', '$sub', '$mul', '$div', '$mod', '$pow'
+            ]:
+                inputs, outputs = get_external_io(['A', 'B'], ['Y'])
+            elif model_name == '$mux':
+                inputs, outputs = get_external_io(['A', 'B', 'S'], ['Y'])
+            else:
+                raise PyrtlError("Unrecognized model name: %s" % model_name)
+
+            return BuiltInModel(model_name, inputs, outputs)
 
     def extract_model_reference(parent, command):
 
@@ -345,8 +451,9 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
             return clks
         formal_clks = get_formal_connected_to_parent_clocks()
 
-        subckt = Subcircuit(models[command['model_name']], clk_set=formal_clks, block=block)
+        subckt = Subcircuit(get_model(command), clk_set=formal_clks, block=block)
         instantiate(subckt)
+
         for fa in command['formal_actual_list']:
             formal = fa['formal']
             actual = fa['actual']
@@ -366,16 +473,122 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
                 raise PyrtlError("%s formal parameter is neither an input nor output of subckt %s"
                                  % (formal, command['model_name']))
 
+    def make_builtin(subckt):
+
+        def twire(w):
+            return subckt.twire(w)
+
+        name = subckt.model.model_name
+
+        if name == '$not':
+            outwire = twire('Y')
+            outwire <<= ~twire('A')
+        elif name == '$reduce_and':
+            outwire = twire('Y')
+            outwire <<= rtl_all(twire('A'))
+        elif name == '$reduce_or':
+            outwire = twire('Y')
+            outwire <<= rtl_any(twire('A'))
+        elif name == '$reduce_xor':
+            outwire = twire('Y')
+            outwire <<= tree_reduce(lambda a, b: a ^ b, twire('A'))
+        elif name == '$reduce_xnor':
+            outwire = twire('Y')
+            outwire <<= tree_reduce(lambda a, b: ~(a ^ b), twire('A'))
+        elif name == '$and':
+            outwire = twire('Y')
+            outwire <<= twire('A') & twire('B')
+        elif name == '$or':
+            outwire = twire('Y')
+            outwire <<= twire('A') | twire('B')
+        elif name == '$xor':
+            outwire = twire('Y')
+            outwire <<= twire('A') ^ twire('B')
+        elif name == '$xnor':
+            outwire = twire('Y')
+            outwire <<= ~(twire('A') ^ twire('B'))
+        elif name == '$shl':
+            outwire = twire('Y')
+            outwire <<= shift_left_logical(twire('A'), twire('B'))
+        elif name == '$shr':
+            outwire = twire('Y')
+            outwire <<= shift_right_logical(twire('A'), twire('B'))
+        elif name == '$sshl':
+            outwire = twire('Y')
+            outwire <<= shift_left_arithmetic(twire('A'), twire('B'))
+        elif name == '$sshr':
+            outwire = twire('Y')
+            outwire <<= shift_right_arithmetic(twire('A'), twire('B'))
+        elif name == '$lt':
+            outwire = twire('Y')
+            outwire <<= twire('A') < twire('B')
+        elif name == '$le':
+            outwire = twire('Y')
+            outwire <<= twire('A') <= twire('B')
+        elif name == '$eq':
+            outwire = twire('Y')
+            outwire <<= twire('A') == twire('B')
+        elif name == '$ne':
+            outwire = twire('Y')
+            outwire <<= twire('A') != twire('B')
+        elif name == '$ge':
+            outwire = twire('Y')
+            outwire <<= twire('A') >= twire('B')
+        elif name == '$gt':
+            outwire = twire('Y')
+            outwire <<= twire('A') > twire('B')
+        elif name == '$add':
+            outwire = twire('Y')
+            outwire <<= twire('A') + twire('B')
+        elif name == '$sub':
+            outwire = twire('Y')
+            outwire <<= twire('A') - twire('B')
+        elif name == '$mul':
+            outwire = twire('Y')
+            outwire <<= twire('A') * twire('B')
+        elif name == '$mux':
+            outwire = twire('Y')
+            outwire <<= mux(twire('S'), twire('A'), twire('B'))
+        # elif name == '$pos':  # Make a number positive
+        #     pass
+        # elif name == '$neg':  # Make a number negative
+        #     pass
+        # elif name == '$reduce_bool':  # Verilog |A
+        #     pass
+        # elif name == '$logic_not':  # Verilog !A
+        #     pass
+        # elif name == '$div':  # Verilog A / B
+        #     pass
+        # elif name == '$mod':  # Verilog A % B
+        #     pass
+        # elif name == '$pow':  # Verilog A ** B
+        #     pass
+        # elif name == '$logic_and':  # Verilog A && B, logical and, returns a single bit
+        #     pass
+        # elif name == '$logic_or':  # Verilog A || B, logical or, returns a single bit
+        #     pass
+        # elif name == '$eqx':  # Verilog A === B tests 4-state logical equality (1, 0, z, x)
+        #     pass
+        # elif name == '$nex':  # Verilog A !== B tests 4-state logical equality (1, 0, z, x)
+        #     pass
+        else:
+            raise PyrtlError('Unrecognized builtin %s' % name)
+
     def instantiate(subckt):
         extract_inputs(subckt)
         extract_outputs(subckt)
-        extract_commands(subckt)
+        if isinstance(subckt.model, UserModel):
+            extract_commands(subckt)
+        elif isinstance(subckt.model, BuiltInModel):
+            make_builtin(subckt)
+        else:
+            raise PyrtlInternalError("Invalid model type '%s'" % str(subckt))
 
     # Get all model definitions
     for model in result:
-        if not top_model:
+        if not top_model:  # First model if not specified
             top_model = model['model_name']
-        models[model['model_name']] = model
+        models[model['model_name']] = UserModel(model)
 
     top = Subcircuit(models[top_model], is_top=True, clk_set={clock_name}, block=block)
     instantiate(top)

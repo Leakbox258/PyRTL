@@ -14,7 +14,7 @@ from abc import ABCMeta, abstractmethod
 from .pyrtlexceptions import PyrtlError, PyrtlInternalError
 from .core import working_block, _NameSanitizer
 from .wire import WireVector, Input, Output, Const, Register
-from .corecircuits import concat_list, mux, rtl_all, rtl_any, tree_reduce
+from .corecircuits import concat_list, mux, or_all_bits, and_all_bits, tree_reduce, select
 from .corecircuits import shift_left_logical, shift_left_arithmetic
 from .corecircuits import shift_right_logical, shift_right_arithmetic
 from .memory import RomBlock
@@ -417,22 +417,24 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
         else:
             # NOTE: Not sure if we can save these in the models dictionary, since
             #       they differ by the number of internal wires (i.e. bitwidth).
-            if model_name in [
+            if model_name in (
                 '$not', '$pos', '$neg',
                 '$reduce_and', '$reduce_or', '$reduce_xor', '$reduce_xnor',
                 '$reduce_bool', '$logic_not'
-            ]:
+            ):
                 inputs, outputs = get_external_io(['A'], ['Y'])
-            elif model_name in [
+            elif model_name in (
                 '$and', '$or', '$xor', '$xnor',
                 '$shl', '$shr', '$sshl', '$sshr',
                 '$logic_and', '$logic_or', '$eqx', '$nex',
                 '$lt', '$le', '$eq', '$ne', '$ge', '$gt',
                 '$add', '$sub', '$mul', '$div', '$mod', '$pow'
-            ]:
+            ):
                 inputs, outputs = get_external_io(['A', 'B'], ['Y'])
-            elif model_name == '$mux':
+            elif model_name in ('$mux', '$pmux'):
                 inputs, outputs = get_external_io(['A', 'B', 'S'], ['Y'])
+            elif model_name == '$dff':
+                inputs, outputs = get_external_io(['CLK', 'D'], ['Q'])
             else:
                 raise PyrtlError("Unrecognized model name: %s" % model_name)
 
@@ -485,10 +487,10 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
             outwire <<= ~twire('A')
         elif name == '$reduce_and':
             outwire = twire('Y')
-            outwire <<= rtl_all(twire('A'))
+            outwire <<= and_all_bits(twire('A'))
         elif name == '$reduce_or':
             outwire = twire('Y')
-            outwire <<= rtl_any(twire('A'))
+            outwire <<= or_all_bits(twire('A'))
         elif name == '$reduce_xor':
             outwire = twire('Y')
             outwire <<= tree_reduce(lambda a, b: a ^ b, twire('A'))
@@ -549,6 +551,34 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
         elif name == '$mux':
             outwire = twire('Y')
             outwire <<= mux(twire('S'), twire('A'), twire('B'))
+        elif name == '$dff':
+            # TODO Need to make sure I'm tracking the clock correctly
+            outwire = twire('Q')
+            flop = Register(bitwidth=len(outwire))
+            flop.next <<= twire('D')
+            outwire <<= flop
+        elif name == '$pmux':  # One-hot mux
+            # Example: let bitwidth of A and Y be 4
+            #          let bitwidth of S be 3
+            #          then bitwidth of B is 4*3=12
+            # if   S == 0b000, output A
+            # elif S == 0b001, output B[0:4]
+            # elif S == 0b010, output B[4:8]
+            # elif S == 0b100, output B[8:12]
+            outwire = twire('Y')
+            slice_size = len(outwire)
+
+            def one_hot_select(s, b):
+                if len(s) == 1:
+                    return b
+                return select(s[0],
+                              b[:slice_size],
+                              one_hot_select(s[1:], b[slice_size:]))
+
+            selector = twire('S')
+            outwire <<= select(~or_all_bits(selector),
+                               twire('A'),
+                               one_hot_select(selector, twire('B')))
         # elif name == '$pos':  # Make a number positive
         #     pass
         # elif name == '$neg':  # Make a number negative

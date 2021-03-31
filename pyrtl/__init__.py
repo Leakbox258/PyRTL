@@ -111,6 +111,7 @@ from .passes import one_bit_selects
 from .passes import two_way_concat
 from .passes import direct_connect_outputs
 from .passes import two_way_fanout
+from .passes import combine_slice_concats
 
 from .transform import net_transform
 from .transform import wire_transform

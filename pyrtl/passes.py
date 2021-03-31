@@ -905,3 +905,106 @@ def two_way_fanout(block=None):
         )
         block.add_net(new_net)
         block.logic.remove(old_net)
+
+def combine_slice_concats(block=None):
+    """ Replaces series of slice-concats with the original wire.
+
+    This is useful when importing unflattened BLIF, where the wire connections
+    between nets consist of series of related 1-bit wire vectors.
+    """
+
+    # For example, replaces a subgraph of the form:
+    #
+    #         <net 1>
+    #      /   /   \   \
+    #   a[0] a[1] a[2] a[3]
+    #     \    \    /   /
+    #          concat
+    #            |
+    #         <net 2>
+    #
+    # with:
+    #
+    #         <net 1>
+    #            |
+    #         <net 2>
+
+    block = working_block(block)
+
+    optimize(block)
+
+    src_nets, _ = block.net_connections()
+
+    def contiguous_slice_concat(concat_net):
+        # 1) Get the 's' nets serving as sources for concat_net's args
+        snets = []
+        for arg in concat_net.args[::-1]:  # Stored MSB to LSB; I'd like LSB first
+            if arg in src_nets:
+                snet = src_nets[arg]
+                if snet.op == 's':
+                    snets.append(snet)
+
+        # Only proceed if *all* the args originate from a slice net
+        if len(snets) != len(concat_net.args):
+            return None
+
+        # 2) Now check if they all originate from the same wire vector
+        starting_wires = set()
+        for snet in snets:
+            assert(len(snet.args) == 1)
+            starting_wires.add(snet.args[0])
+
+        if len(starting_wires) != 1:
+            return None
+
+        # 3) Now check if all the snets are contiguous
+        expected_index = 0
+        for snet in snets:
+            low = snet.op_param[0]
+            if low != expected_index:
+                return None
+
+            high = snet.op_param[-1] + 1
+            exp_range = range(low, high)
+            if snet.op_param != tuple(exp_range):
+                return None
+
+            expected_index = high
+
+        # 4) If so, return the originating wire, indicating
+        #    it can replace the concat_net's destination wire.
+        orig_wire = list(starting_wires)[0]
+        assert(expected_index == len(concat_net.dests[0]))
+        return orig_wire
+
+    # Each concat is a potential replacement
+    replaceable = {}
+    wires_to_remove = set()
+    for cnet in block.logic_subset(op='c'):
+        orig = contiguous_slice_concat(cnet)
+        if orig is not None:
+            replaceable[cnet.dests[0]] = orig
+            wires_to_remove.update(set(cnet.args))
+
+    # Get the new logic
+    new_logic = set()
+    for net in block.logic:
+        new_args = tuple(replaceable.get(x, x) for x in net.args)
+        new_net = LogicNet(net.op, net.op_param, new_args, net.dests)
+        new_logic.add(new_net)
+
+    # NOTE: this is the one place I'm a little iffy about
+    for dest, orig in replaceable.items():
+        if isinstance(dest, Output):
+            new_net = LogicNet('w', None, orig, dest)
+            new_logic.add(new_net)
+
+    # Update the block with new logic, remove unused wvs
+    block.logic = new_logic
+    wires_to_remove.update(set(replaceable.keys()))
+    for dead_wirevector in wires_to_remove:
+        del block.wirevector_by_name[dead_wirevector.name]
+        block.wirevector_set.remove(dead_wirevector)
+
+    _remove_unlistened_nets(block)
+    block.sanity_check()

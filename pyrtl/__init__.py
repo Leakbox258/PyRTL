@@ -109,5 +109,6 @@ from .passes import and_inverter_synth
 from .passes import optimize
 from .passes import one_bit_selects
 from .passes import two_way_concat
+from .passes import combine_slice_concats
 
 from .transform import net_transform, wire_transform, replace_wire, copy_block, clone_wire

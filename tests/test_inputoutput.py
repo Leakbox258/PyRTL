@@ -736,6 +736,7 @@ class TestInputFromBlif(unittest.TestCase):
             pyrtl.working_block().get_wirevector_by_name(s)
             for s in ['dir', 'rstn', 'en', 'd', 'out']
         ]
+        pyrtl.combine_slice_concats()
         io_input = pyrtl.working_block().wirevector_subset(pyrtl.Input)
         self.assertIn(di, io_input)
         self.assertIn(rstn, io_input)

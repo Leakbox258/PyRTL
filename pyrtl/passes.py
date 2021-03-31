@@ -698,56 +698,45 @@ def combine_slice_concats(block=None):
             expected_index = high
 
         # 4) If so, return the originating wire, indicating
-        #    it can replace the concat_net's destination wire.
+        #    it can be connected to the concat_net's destination wire via a slice.
         orig_wire = list(starting_wires)[0]
         assert(expected_index == len(concat_net.dests[0]))
 
-        return orig_wire, snets
+        return orig_wire
 
     # Each concat is a potential replacement
     replaceable = {}
     for cnet in block.logic_subset(op='c'):
-        res = contiguous_slice_concat(cnet)
-        if res is not None:
-            (orig, snets) = res
-
-            # Remove the unneeded slice nets...
-            for n in snets:
-                block.logic.remove(n)
-                del block.wirevector_by_name[n.dests[0].name]
-                block.wirevector_set.remove(n.dests[0])
-            # ...and the unneeded concat net
+        orig = contiguous_slice_concat(cnet)
+        if orig is not None:
+            # NOTE: *Only* remove the unneeded concat net. Why? Because
+            # its argument wires (all of which are coming from slice nets)
+            # might be used for other unrelated nets. By just removing
+            # the concat net and calling _remove_unlistened_nets,
+            # the other nets and unused wires should be removed safely.
             block.logic.remove(cnet)
 
             dest = cnet.dests[0]
-            if len(orig) == len(dest):
-                # No net is needed at all; replace in dest with orig in the next pass
+            new_net = LogicNet('s', tuple(range(dest.bitwidth)), (orig,), (dest,))
+            block.logic.add(new_net)
+
+            # If they're the same size, we can totally replace dest with orig later
+            if len(orig) == len(dest) and not isinstance(dest, Output):
                 replaceable[dest] = orig
-            else:
-                # Replace with a single slice
-                new_net = LogicNet('s', tuple(range(dest.bitwidth)), (orig,), (dest,))
-                block.logic.add(new_net)
 
-    # Now replace each concat dest wire with the originating wire (since same size)
-    if len(replaceable) > 0:
-        # Get the new logic
-        new_logic = set()
-        for net in block.logic:
-            new_args = tuple(replaceable.get(x, x) for x in net.args)
-            new_net = LogicNet(net.op, net.op_param, new_args, net.dests)
-            new_logic.add(new_net)
+    # Get the new logic
+    new_logic = set()
+    for net in block.logic:
+        new_args = tuple(replaceable.get(x, x) for x in net.args)
+        new_net = LogicNet(net.op, net.op_param, new_args, net.dests)
+        new_logic.add(new_net)
 
-        # NOTE: this is the one place I'm a little iffy about
-        for dest, orig in replaceable.items():
-            if isinstance(dest, Output):
-                new_net = LogicNet('w', None, orig, dest)
-                new_logic.add(new_net)
-
-        # Update the block with new logic, remove unused wvs
-        block.logic = new_logic
-        for dead_wirevector in replaceable.keys():
-            del block.wirevector_by_name[dead_wirevector.name]
-            block.wirevector_set.remove(dead_wirevector)
+    # Update the block with new logic, remove unused wvs
+    block.logic = new_logic
+    wires_to_remove = set(replaceable.keys())
+    for dead_wirevector in wires_to_remove:
+        del block.wirevector_by_name[dead_wirevector.name]
+        block.wirevector_set.remove(dead_wirevector)
 
     _remove_unlistened_nets(block)
     block.sanity_check()

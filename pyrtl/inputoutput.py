@@ -18,7 +18,7 @@ from .corecircuits import concat_list, mux, or_all_bits, and_all_bits, tree_redu
 from .corecircuits import shift_left_logical, shift_left_arithmetic
 from .corecircuits import shift_right_logical, shift_right_arithmetic
 from .memory import RomBlock
-from .passes import two_way_concat, one_bit_selects
+from .passes import combine_slice_concats, two_way_concat, one_bit_selects
 
 
 class Subcircuit:
@@ -622,7 +622,6 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
 
     top = Subcircuit(models[top_model], is_top=True, clk_set={clock_name}, block=block)
     instantiate(top)
-
 
 # ----------------------------------------------------------------
 #    __       ___  __       ___

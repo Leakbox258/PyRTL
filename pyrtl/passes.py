@@ -975,6 +975,11 @@ def combine_slice_concats(block=None):
         #    it can replace the concat_net's destination wire.
         orig_wire = list(starting_wires)[0]
         assert(expected_index == len(concat_net.dests[0]))
+
+        # Can only replace dest wire with the originating wire if they're the same width
+        if len(concat_net.dests[0]) != len(orig_wire):
+            return None
+
         return orig_wire
 
     # Each concat is a potential replacement

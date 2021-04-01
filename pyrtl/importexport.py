@@ -574,6 +574,8 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
                 inputs, outputs = get_external_io(['A', 'B'], ['Y'])
             elif model_name == '$mux':
                 inputs, outputs = get_external_io(['A', 'B', 'S'], ['Y'])
+            elif model_name == '$dff':
+                inputs, outputs = get_external_io(['CLK', 'D'], ['Q'])
             else:
                 raise PyrtlError("Unrecognized model name: %s" % model_name)
 
@@ -595,6 +597,7 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
         # subckt = Subcircuit(models[command['model_name']], clk_set=formal_clks, block=block)
         subckt = Subcircuit(get_model(command), clk_set=formal_clks, block=block)
         instantiate(subckt)
+
         for fa in command['formal_actual_list']:
             formal = fa['formal']
             actual = fa['actual']
@@ -690,23 +693,54 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
         elif name == '$mux':
             outwire = twire('Y')
             outwire <<= mux(twire('S'), twire('A'), twire('B'))
-        # elif name == '$pos':  # Make a number positive
-        #     pass
-        # elif name == '$neg':  # Make a number negative
-        #     pass
-        # elif name == '$reduce_bool':  # Verilog |A
-        #     pass
-        # elif name == '$logic_not':  # Verilog !A
-        #     pass
+        elif name == '$dff':
+            # TODO Need to make sure I'm tracking the clock correctly
+            outwire = twire('Q')
+            flop = Register(bitwidth=len(outwire))
+            flop.next <<= twire('D')
+            outwire <<= flop
+        elif name == '$pmux':  # One-hot mux
+            # Example: let bitwidth of A and Y be 4
+            #          let bitwidth of S be 3
+            #          then bitwidth of B is 4*3=12
+            # if   S == 0b000, output A
+            # elif S == 0b001, output B[0:4]
+            # elif S == 0b010, output B[4:8]
+            # elif S == 0b100, output B[8:12]
+            outwire = twire('Y')
+            slice_size = len(outwire)
+
+            def one_hot_select(s, b):
+                if len(s) == 1:
+                    return b
+                return select(s[0],
+                              b[:slice_size],
+                              one_hot_select(s[1:], b[slice_size:]))
+
+            selector = twire('S')
+            outwire <<= select(~or_all_bits(selector),
+                               twire('A'),
+                               one_hot_select(selector, twire('B')))
+        elif name == '$logic_not':  # Verilog !A (convert nonzero into 0, zero into 1)
+            outwire = twire('Y')
+            outwire <<= ~logical_truth(twire('A'))
+        elif name == '$logic_and':  # Verilog A && B, logical and, returns a single bit
+            outwire = twire('Y')
+            outwire <<= logical_truth(twire('A')) & logical_truth(twire('B'))
+        elif name == '$logic_or':  # Verilog A || B, logical or, returns a single bit
+            outwire = twire('Y')
+            outwire <<= logical_truth(twire('A')) | logical_truth(twire('B'))
+        elif name == '$pos':  # Unary +, leave unchanged
+            outwire = twire('Y')
+            outwire <<= twire('A')
+        elif name == '$neg':  # Unary -,
+            outwire = twire('Y')
+            outwire <<= ~twire('A') + 1
         # elif name == '$div':  # Verilog A / B
         #     pass
         # elif name == '$mod':  # Verilog A % B
         #     pass
         # elif name == '$pow':  # Verilog A ** B
-        #     pass
-        # elif name == '$logic_and':  # Verilog A && B, logical and, returns a single bit
-        #     pass
-        # elif name == '$logic_or':  # Verilog A || B, logical or, returns a single bit
         #     pass
         # elif name == '$eqx':  # Verilog A === B tests 4-state logical equality (1, 0, z, x)
         #     pass

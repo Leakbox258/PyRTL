@@ -480,6 +480,10 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
         def twire(w):
             return subckt.twire(w)
 
+        def logical_truth(w):
+            # Just a descriptive name for getting the logical truthiness of a wire
+            return or_all_bits(w)
+
         name = subckt.model.model_name
 
         if name == '$not':
@@ -488,7 +492,7 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
         elif name == '$reduce_and':
             outwire = twire('Y')
             outwire <<= and_all_bits(twire('A'))
-        elif name == '$reduce_or':
+        elif name in ('$reduce_or', '$reduce_bool'):
             outwire = twire('Y')
             outwire <<= or_all_bits(twire('A'))
         elif name == '$reduce_xor':
@@ -579,23 +583,26 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
             outwire <<= select(~or_all_bits(selector),
                                twire('A'),
                                one_hot_select(selector, twire('B')))
-        # elif name == '$pos':  # Make a number positive
-        #     pass
-        # elif name == '$neg':  # Make a number negative
-        #     pass
-        # elif name == '$reduce_bool':  # Verilog |A
-        #     pass
-        # elif name == '$logic_not':  # Verilog !A
-        #     pass
+        elif name == '$logic_not':  # Verilog !A (convert nonzero into 0, zero into 1)
+            outwire = twire('Y')
+            outwire <<= ~logical_truth(twire('A'))
+        elif name == '$logic_and':  # Verilog A && B, logical and, returns a single bit
+            outwire = twire('Y')
+            outwire <<= logical_truth(twire('A')) & logical_truth(twire('B'))
+        elif name == '$logic_or':  # Verilog A || B, logical or, returns a single bit
+            outwire = twire('Y')
+            outwire <<= logical_truth(twire('A')) | logical_truth(twire('B'))
+        elif name == '$pos':  # Unary +, leave unchanged
+            outwire = twire('Y')
+            outwire <<= twire('A')
+        elif name == '$neg':  # Unary -,
+            outwire = twire('Y')
+            outwire <<= ~twire('A') + 1
         # elif name == '$div':  # Verilog A / B
         #     pass
         # elif name == '$mod':  # Verilog A % B
         #     pass
         # elif name == '$pow':  # Verilog A ** B
-        #     pass
-        # elif name == '$logic_and':  # Verilog A && B, logical and, returns a single bit
-        #     pass
-        # elif name == '$logic_or':  # Verilog A || B, logical or, returns a single bit
         #     pass
         # elif name == '$eqx':  # Verilog A === B tests 4-state logical equality (1, 0, z, x)
         #     pass

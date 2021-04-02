@@ -931,7 +931,7 @@ def combine_slice_concats(block=None):
 
     block = working_block(block)
 
-    optimize(block)
+    _remove_wire_nets(block)
 
     src_nets, _ = block.net_connections()
 

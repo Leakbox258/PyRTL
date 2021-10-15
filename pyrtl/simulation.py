@@ -11,7 +11,7 @@ import six
 
 from .pyrtlexceptions import PyrtlError, PyrtlInternalError
 from .core import working_block, PostSynthBlock, _PythonSanitizer
-from .wire import Input, Register, Const, Output, WireVector
+from .wire import Input, Register, Const, Output, WireVector, Hole
 from .memory import RomBlock
 from .helperfuncs import check_rtl_assertions, _currently_in_jupyter_notebook
 from .importexport import _VerilogSanitizer
@@ -424,6 +424,15 @@ class Simulation(object):
                 result = mem._get_read_data(read_addr)
             else:
                 result = self.memvalue[memid].get(read_addr, self.default_value)
+        elif net.op == 'h':
+            # Nothing to do, we're a hole!
+            result = 0
+            if net.dests[0].bitwidth is None:
+                # Return early because we can't sanitize because no bitwidth set
+                # on our Hole wire yet.
+                assert isinstance(net.dests[0], Hole)
+                self.value[net.dests[0]] = result
+                return
         else:
             raise PyrtlInternalError('error, unknown op type')
 

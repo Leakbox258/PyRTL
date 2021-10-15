@@ -217,8 +217,15 @@ class WireVector(object):
             resultlen = resultlen * 2  # more bits needed for mult
         elif op in '<>=':
             resultlen = 1
+        elif op in 'h':
+            # resultlen = None  # Warning: this has ripple effects, but is probably more correct!
+            pass  # Simpler, but wrong-ish (we won't fail checks for non-None bitwidth)
 
-        s = WireVector(bitwidth=resultlen)
+        if isinstance(self, Hole) or isinstance(other, Hole) or op in 'h':
+            # Retain its Holiness
+            s = Hole(bitwidth=resultlen)
+        else:
+            s = WireVector(bitwidth=resultlen)
         net = LogicNet(
             op=op,
             op_param=None,
@@ -440,6 +447,10 @@ class WireVector(object):
                          "the indexing operator (wire[indexes]) instead.\n\n"
                          "For example: wire[2:9] selects the wires from index 2 to "
                          "index 8 to make a new length 7 wire.")
+
+    def __pow__(self, other):
+        """ The hole operator """
+        return self._two_var_op(other, 'h')
 
     def __len__(self):
         """ Get the bitwidth of a WireVector.
@@ -781,3 +792,21 @@ class Register(WireVector):
         self.reg_in = next
         net = LogicNet('r', None, args=(self.reg_in,), dests=(self,))
         working_block().add_net(net)
+
+
+class Hole(WireVector):
+    _code = 'H'
+
+    def __init__(self, bitwidth=None, name='', io=None, block=None):
+        """ Construct a Hole wirevector.
+
+        :param (bool) io: if this should be treated as an edge of the graph, like Input/Output.
+            This is currently just used to appease the loop detection algorithms; "input" holes
+            won't actual take in values during simulation, nor will "output" holes produce them.
+
+        TODO what about a one-var hole operator?
+        """
+        if io is not None and io not in ('in', 'out'):
+            raise PyrtlError("io must be None, 'in', or 'out'")
+        self.io = io
+        super(Hole, self).__init__(bitwidth, name, block)

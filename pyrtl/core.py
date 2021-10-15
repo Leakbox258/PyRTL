@@ -259,7 +259,7 @@ class Block(object):
         self.wirevector_set = set()  # set of all wirevectors
         self.wirevector_by_name = {}  # map from name->wirevector, used for performance
         # pre-synthesis wirevectors to post-synthesis vectors
-        self.legal_ops = set('w~&|^n+-*<>=xcsrm@')  # set of legal OPS
+        self.legal_ops = set('w~&|^n+-*<>=xcsrm@h')  # set of legal OPS
         self.rtl_assert_dict = {}   # map from wirevectors -> exceptions, used by rtl_assert
         self.memblock_by_name = {}  # map from name->memblock, for easy access to memblock objs
 
@@ -492,9 +492,10 @@ class Block(object):
         Also, the order of the nets is not guaranteed to be the same
         over multiple iterations.
         """
-        from .wire import Input, Const, Register
+        from .wire import Input, Const, Register, Hole
         src_dict, dest_dict = self.net_connections()
         to_clear = self.wirevector_subset((Input, Const, Register))
+        to_clear.update({w for w in self.wirevector_subset(Hole) if w.io == 'in'})
         cleared = set()
         remaining = self.logic.copy()
         try:
@@ -524,14 +525,14 @@ class Block(object):
         built according to the assumptions stated in the Block comments.
         """
 
-        from .wire import Input, Const, Output
+        from .wire import Input, Const, Output, Hole
         from .helperfuncs import get_stack, get_stacks
 
         # check for valid LogicNets (and wires)
         for net in self.logic:
             self.sanity_check_net(net)
 
-        for w in self.wirevector_subset():
+        for w in self.wirevector_subset(exclude=Hole):
             if w.bitwidth is None:
                 raise PyrtlError(
                     'error, missing bitwidth for WireVector "%s" \n\n %s' % (w.name, get_stack(w)))
@@ -559,6 +560,7 @@ class Block(object):
                              get_stacks(*connected_minus_allwires)))
 
         all_input_and_consts = self.wirevector_subset((Input, Const))
+        all_input_and_consts.update({w for w in self.wirevector_subset(Hole) if w.io == 'in'})
 
         # Check for wires that aren't connected to anything (inputs and consts can be unconnected)
         allwires_minus_connected = self.wirevector_set.difference(full_set)
@@ -691,6 +693,9 @@ class Block(object):
         if net.op not in self.legal_ops:
             raise PyrtlInternalError('error, net op "%s" not from acceptable set %s' %
                                      (net.op, self.legal_ops))
+
+        if net.op in 'h':
+            return
 
         # operation-specific checks on arguments
         if net.op in 'w~rsm' and len(net.args) != 1:

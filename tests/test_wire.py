@@ -404,5 +404,40 @@ class TestKeepingCallStack(unittest.TestCase):
         self.assertIsInstance(call_stack, list)
 
 
+class TestHole(unittest.TestCase):
+    def setUp(self):
+        pyrtl.reset_working_block()
+
+    def test_add_single_hole_wire_on_edge(self):
+        i = pyrtl.Input(4, 'i')
+        h = pyrtl.Hole(2, 'h', io='in')
+        o = pyrtl.Output(name='o')
+        o <<= i + h
+
+        self.assertIn(h, pyrtl.working_block().wirevector_subset(pyrtl.Hole))
+
+        # Just to see it not crash
+        sim = pyrtl.Simulation()
+        sim.step({'i': 1})
+
+    def test_add_single_hole_gate(self):
+        i, j = pyrtl.input_list('i/4 j/4')
+        o = i ** j
+        hole_ops = pyrtl.working_block().logic_subset(op='h')
+
+        self.assertEqual(len(hole_ops), 1)
+        self.assertEqual(list(hole_ops)[0].args, (i, j))
+        self.assertEqual(list(hole_ops)[0].dests, (o,))
+
+        self.assertIsInstance(o, pyrtl.Hole)
+        # NOTE: eventually this should be None, as there's
+        # no way to implify what the hole does...
+        self.assertEqual(o.bitwidth, 4)
+
+        # Just to see it not crash
+        sim = pyrtl.Simulation()
+        sim.step({'i': 1, 'j': 3})
+
+
 if __name__ == "__main__":
     unittest.main()

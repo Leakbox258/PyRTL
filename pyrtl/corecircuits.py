@@ -605,6 +605,21 @@ def tree_reduce(op, vector):
     return op(left, right)
 
 
+def net_hole(name, bitwidth, *ins):
+    """ Netlist hole for placeholder logic without an implementation.
+
+    :param name: used as a unique identifier for the hole
+    :param bitwidth: the bitwidth the output wire should be
+    :param WireVector ins: the WireVector inputs to the hole
+    """
+    ins = tuple(as_wires(w) for w in ins)
+    out = WireVector(bitwidth=bitwidth)
+
+    net = LogicNet(op='h', op_param=name, args=ins, dests=(out,))
+    working_block().add_net(net)  # this includes sanity check on the mux
+    return out
+
+
 def _apply_op_over_all_bits(op, vector):
     if len(vector) < 1:
         raise PyrtlError("Cannot reduce empty vectors")

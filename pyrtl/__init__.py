@@ -65,6 +65,7 @@ from .corecircuits import shift_left_arithmetic
 from .corecircuits import shift_right_arithmetic
 from .corecircuits import shift_left_logical
 from .corecircuits import shift_right_logical
+from .corecircuits import net_hole
 
 # memory blocks
 from .memory import MemBlock

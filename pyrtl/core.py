@@ -70,7 +70,8 @@ class LogicNet(collections.namedtuple('LogicNet', ['op', 'op_param', 'args', 'de
                                                put it into data
         ('@', (memid, mem), (addr, data, wr_en), ()) => write data to mem (w/ id memid) at
                                                         address addr; req. write enable (wr_en)
-
+        ('h', name, (*args), (out)) => net hole, or a placeholder net on the netlist
+                                          when synthesized, all output wires are set to X
     """
 
     def __str__(self):
@@ -89,7 +90,7 @@ class LogicNet(collections.namedtuple('LogicNet', ['op', 'op_param', 'args', 'de
             if self.op in '&|':
                 return "{} & \\leftarrow \\{} \\, - & {} {} \\\\".format(
                        lhs, self.op, rhs, options)
-            elif self.op in "wn+-*<>xcsr":
+            elif self.op in "wn+-*<>xcsrh":
                 return "{} & \\leftarrow {} \\, - & {} {} \\\\".format(
                        lhs, self.op, rhs, options)
             elif self.op in "=":
@@ -101,7 +102,6 @@ class LogicNet(collections.namedtuple('LogicNet', ['op', 'op_param', 'args', 'de
             elif self.op in "~":
                 return "{} & \\leftarrow \\sim \\, - & {} {} \\\\".format(
                        lhs, rhs, options)
-
             elif self.op in 'm@':
                 memid, memblock = self.op_param
                 extrainfo = 'memid=' + str(memid)
@@ -122,7 +122,7 @@ class LogicNet(collections.namedtuple('LogicNet', ['op', 'op_param', 'args', 'de
                 raise PyrtlInternalError('error, unknown op "%s"' % str(self.op))
 
         else:  # not in ipython
-            if self.op in 'w~&|^n+-*<>=xcsr':
+            if self.op in 'w~&|^n+-*<>=xcsrh':
                 options = ' ' + options if options else ''
                 return "{} <-- {} -- {}{}".format(lhs, self.op, rhs, options)
             elif self.op in 'm@':
@@ -259,7 +259,7 @@ class Block(object):
         self.wirevector_set = set()  # set of all wirevectors
         self.wirevector_by_name = {}  # map from name->wirevector, used for performance
         # pre-synthesis wirevectors to post-synthesis vectors
-        self.legal_ops = set('w~&|^n+-*<>=xcsrm@')  # set of legal OPS
+        self.legal_ops = set('w~&|^n+-*<>=xcsrm@h')  # set of legal OPS
         self.rtl_assert_dict = {}   # map from wirevectors -> exceptions, used by rtl_assert
         self.memblock_by_name = {}  # map from name->memblock, for easy access to memblock objs
 

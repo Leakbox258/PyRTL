@@ -7,7 +7,7 @@ import math
 
 from .pyrtlexceptions import PyrtlError, PyrtlInternalError
 from .core import LogicNet, working_block
-from .wire import Const, WireVector
+from .wire import Const, WireVector, Input
 from pyrtl.rtllib import barrel
 from pyrtl.rtllib import muxes
 from .conditional import otherwise
@@ -612,6 +612,7 @@ def net_hole(name, bitwidth, *ins):
     :param bitwidth: the bitwidth the output wire should be
     :param WireVector ins: the WireVector inputs to the hole
     """
+    ins = (Input(bitwidth=1, name=name),) + ins
     ins = tuple(as_wires(w) for w in ins)
     out = WireVector(bitwidth=bitwidth)
 

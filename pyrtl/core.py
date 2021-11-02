@@ -76,8 +76,6 @@ class LogicNet(collections.namedtuple('LogicNet', ['op', 'op_param', 'args', 'de
 
     def __str__(self):
         rhs = ', '.join(str(x) for x in self.args)
-        if self.op in 'h':  # don't print pseudo-input in hole
-            rhs = ', '.join(str(x) for x in self.args[1:])
         lhs = ', '.join(str(x) for x in self.dests)
         options = '' if self.op_param is None else '(' + str(self.op_param) + ')'
 

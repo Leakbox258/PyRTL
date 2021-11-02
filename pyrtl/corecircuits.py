@@ -612,7 +612,7 @@ def net_hole(name, bitwidth, *ins):
     :param bitwidth: the bitwidth the output wire should be
     :param WireVector ins: the WireVector inputs to the hole
     """
-    ins = (Input(bitwidth=1, name=name),) + ins
+    ins = (Input(bitwidth=1, name=name + '_input'),) + ins
     ins = tuple(as_wires(w) for w in ins)
     out = WireVector(bitwidth=bitwidth)
 

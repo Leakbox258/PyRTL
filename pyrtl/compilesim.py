@@ -58,20 +58,25 @@ class DllMemInspector(Mapping):
 class CompiledSimulation(object):
     """Simulate a block, compiling to C for efficiency.
 
-    This module provides significant speed improvements over FastSimulation,
-    at the cost of somewhat longer setup time.
-    Generally this will do better than FastSimulation for simulations requiring over 1000 steps.
-    It is not built to be a debugging tool, though it may help with debugging.
-    Note that only Input and Output wires can be traced using CompiledSimulation.  This code
-    is still experimental, but has been used on designs of significant scale to good effect.
+    This module provides significant speed improvements over
+    :class:`.FastSimulation`, at the cost of somewhat longer setup time.
+    Generally this will do better than :class:`.FastSimulation` for simulations
+    requiring over 1000 steps.  It is not built to be a debugging tool, though
+    it may help with debugging.  Note that only :class:`.Input` and
+    :class:`.Output` wires can be traced using CompiledSimulation.  This code
+    is still experimental, but has been used on designs of significant scale to
+    good effect.
 
     In order to use this, you need:
+
         - A 64-bit processor
         - GCC (tested on version 4.8.4)
         - A 64-bit build of Python
+
     If using the multiplication operand, only some architectures are supported:
+
         - x86-64 / amd64
-        - arm64 / aarch64 (untested)
+        - arm64 / aarch64
         - mips64 (untested)
 
     default_value is currently only implemented for registers, not memories.
@@ -79,14 +84,16 @@ class CompiledSimulation(object):
     A Simulation step works as follows:
 
     1. Registers are updated:
-        a. (If this is the first step) With the default values passed in
+
+        1. (If this is the first step) With the default values passed in
            to the Simulation during instantiation and/or any reset values
            specified in the individual registers.
-        a. (Otherwise) With their next values calculated in the previous step
-           (`r` logic nets).
+        2. (Otherwise) With their next values calculated in the previous step
+           (``r`` logic nets).
+
     2. The new values of these registers as well as the values of block inputs
        are propagated through the combinational logic.
-    3. Memory writes are performed (`@` logic nets).
+    3. Memory writes are performed (``@`` logic nets).
     4. The current values of all wires are recorded in the trace.
     5. The next values for the registers are saved, ready to be applied at the
        beginning of the next step.
@@ -94,6 +101,7 @@ class CompiledSimulation(object):
     Note that the register values saved in the trace after each simulation step
     are from *before* the register has latched in its newly calculated values,
     since that latching in occurs at the beginning of the *next* step.
+
     """
 
     def __init__(
@@ -151,49 +159,60 @@ class CompiledSimulation(object):
 
         :param inputs: A mapping from input names to the values for the step.
 
-        A step causes the block to be updated as follows, in order: (1) registers are updated
-        with their `next` values computed in the previous cycle; (2) block inputs and these new
-        register values propagate through the combinational logic; (3) memories are updated; and
-        (4) the `next` values of the registers are saved for use in step 1 of the next cycle.
+        A step causes the block to be updated as follows, in order:
+
+        1. Registers are updated with their :attr:`~.Register.next` values
+           computed in the previous cycle
+        2. Block inputs and these new register values propagate through the
+           combinational logic
+        3. Memories are updated
+        4. The :attr:`~.Register.next` values of the registers are saved for
+           use in step 1 of the next cycle.
         """
         self.run([inputs])
 
     def step_multiple(self, provided_inputs={}, expected_outputs={}, nsteps=None,
                       file=sys.stdout, stop_after_first_error=False):
-        """ Take the simulation forward N cycles, where N is the number of values
+        """Take the simulation forward N cycles, where N is the number of values
          for each provided input.
 
         :param provided_inputs: a dictionary mapping wirevectors to their values for N steps
         :param expected_outputs: a dictionary mapping wirevectors to their expected values
-            for N steps; use '?' to indicate you don't care what the value at that step is
+            for N steps; use ``?`` to indicate you don't care what the value at that step is
         :param nsteps: number of steps to take (defaults to None, meaning step for each
             supplied input value)
         :param file: where to write the output (if there are unexpected outputs detected)
         :param stop_after_first_error: a boolean flag indicating whether to stop the simulation
             after the step where the first errors are encountered (defaults to False)
 
-        All input wires must be in the provided_inputs in order for the simulation
+        All input wires must be in the `provided_inputs` in order for the simulation
         to accept these values. Additionally, the length of the array of provided values for each
         input must be the same.
 
-        When 'nsteps' is specified, then it must be *less than or equal* to the number of values
-        supplied for each input when 'provided_inputs' is non-empty. When 'provided_inputs' is
-        empty (which may be a legitimate case for a design that takes no inputs), then 'nsteps'
-        will be used.  When 'nsteps' is not specified, then the simulation will take the number
+        When `nsteps` is specified, then it must be *less than or equal* to the number of values
+        supplied for each input when `provided_inputs` is non-empty. When `provided_inputs` is
+        empty (which may be a legitimate case for a design that takes no inputs), then `nsteps`
+        will be used.  When `nsteps` is not specified, then the simulation will take the number
         of steps equal to the number of values supplied for each input.
 
-        Example: if we have inputs named 'a' and 'b' and output 'o', we can call:
-        sim.step_multiple({'a': [0,1], 'b': [23,32]}, {'o': [42, 43]}) to simulate 2 cycles,
-        where in the first cycle 'a' and 'b' take on 0 and 23, respectively, and 'o' is expected to
-        have the value 42, and in the second cycle 'a' and 'b' take on 1 and 32, respectively, and
-        'o' is expected to have the value 43.
+        Example: if we have inputs named ``a`` and ``b`` and output ``o``, we can call::
 
-        If your values are all single digit, you can also specify them in a single string, e.g.
-        sim.step_multiple({'a': '01', 'b': '01'}) will simulate 2 cycles, with 'a' and 'b' taking on
-        0 and 0, respectively, on the first cycle and '1' and '1', respectively, on the second
+            sim.step_multiple({'a': [0,1], 'b': [23,32]}, {'o': [42, 43]})
+
+        to simulate 2 cycles, where in the first cycle ``a`` and ``b`` take on
+        0 and 23, respectively, and ``o`` is expected to have the value 42, and
+        in the second cycle ``a`` and ``b`` take on 1 and 32, respectively, and
+        ``o`` is expected to have the value 43.
+
+        If your values are all single digit, you can also specify them in a single string, e.g.::
+
+            sim.step_multiple({'a': '01', 'b': '01'})
+
+        will simulate 2 cycles, with ``a`` and ``b`` taking on
+        0 and 0, respectively, on the first cycle and 1 and 1, respectively, on the second
         cycle.
 
-        Example: if the design had no inputs, like so:
+        Example: if the design had no inputs, like so::
 
             a = pyrtl.Register(8)
             b = pyrtl.Output(8, 'b')
@@ -204,8 +223,8 @@ class CompiledSimulation(object):
             sim = pyrtl.Simulation()
             sim.step_multiple(nsteps=3)
 
-        Using sim.step_multiple(nsteps=3) simulates 3 cycles, after which we would expect the value
-        of 'b' to be 2.
+        Using ``sim.step_multiple(nsteps=3)`` simulates 3 cycles, after which
+        we would expect the value of ``b`` to be 2.
 
         """
 
@@ -227,12 +246,14 @@ class CompiledSimulation(object):
         if nsteps < 1:
             raise PyrtlError("must simulate at least one step")
 
-        if list(filter(lambda l: len(l) < nsteps, provided_inputs.values())):
+        if list(filter(lambda value: len(value) < nsteps,
+                       provided_inputs.values())):
             raise PyrtlError(
                 "must supply a value for each provided wire "
                 "for each step of simulation")
 
-        if list(filter(lambda l: len(l) < nsteps, expected_outputs.values())):
+        if list(filter(lambda value: len(value) < nsteps,
+                       expected_outputs.values())):
             raise PyrtlError(
                 "any expected outputs must have a supplied value "
                 "each step of simulation")
@@ -361,9 +382,12 @@ class CompiledSimulation(object):
             self._create_code(lambda s: f.write(s + '\n'))
         if platform.system() == 'Darwin':
             shared = '-dynamiclib'
+            march = ''
         else:
             shared = '-shared'
-        subprocess.check_call(['gcc', '-O0', '-march=native', '-std=c99', '-m64',
+            march = '-march=native'
+
+        subprocess.check_call(['gcc', '-O0', march, '-std=c99', '-m64',
                                shared, '-fPIC',
                                path.join(self._dir, 'pyrtlsim.c'),
                                '-o', path.join(self._dir, 'pyrtlsim.so'), ],
@@ -732,10 +756,11 @@ class CompiledSimulation(object):
         machine = machine_alias.get(machine, machine)
         mulinstr = {
             'x86_64': '"mulq %q3":"=a"(pl),"=d"(ph):"%0"(t0),"r"(t1):"cc"',
-            'arm64': '"mul %0, %2, %3\n\tumulh %1, %2, %3":'
-                     '"=&r"(*pl),"=r"(*ph):"r"(t0),"r"(t1):"cc"',
-            'mips64': '"dmultu %2, %3\n\tmflo %0\n\tmfhi %1":'
-                      '"=r"(*pl),"=r"(*ph):"r"(t0),"r"(t1)',
+            'arm64': '"mul %0, %2, %3\\n\\t" \\\n'
+                     '"umulh %1, %2, %3":"=&r"(pl),"=r"(ph):"r"(t0),"r"(t1):"cc"',
+            'mips64': '"dmultu %2, %3\\n\\t" \\\n'
+                      '"tmflo %0\\n\\t" \\\n'
+                      '"mfhi %1":"=r"(pl),"=r"(ph):"r"(t0),"r"(t1)',
         }
         if machine in mulinstr:
             write('#define mul128(t0, t1, pl, ph) __asm__({})'.format(mulinstr[machine]))

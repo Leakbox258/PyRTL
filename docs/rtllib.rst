@@ -29,7 +29,6 @@ Adders
 
 .. automodule:: pyrtl.rtllib.adders
    :members:
-   :show-inheritance:
    :special-members:
    :undoc-members:
    :exclude-members: __dict__,__weakref__,__module__
@@ -43,8 +42,6 @@ AES-128
 
 .. automodule:: pyrtl.rtllib.aes
    :members:
-   :show-inheritance:
-   :special-members:
    :undoc-members:
    :exclude-members: __dict__,__weakref__,__module__
 
@@ -57,7 +54,6 @@ Barrel
 
 .. automodule:: pyrtl.rtllib.barrel
    :members:
-   :show-inheritance:
    :special-members:
    :undoc-members:
    :exclude-members: __dict__,__weakref__,__module__
@@ -71,7 +67,6 @@ Library Utilities
 
 .. automodule:: pyrtl.rtllib.libutils
    :members:
-   :show-inheritance:
    :special-members:
    :undoc-members:
    :exclude-members: __dict__,__weakref__,__module__
@@ -85,7 +80,6 @@ Multipliers
 
 .. automodule:: pyrtl.rtllib.multipliers
    :members:
-   :show-inheritance:
    :special-members:
    :undoc-members:
    :exclude-members: __dict__,__weakref__,__module__
@@ -99,7 +93,6 @@ Muxes
 
 .. automodule:: pyrtl.rtllib.muxes
    :members:
-   :show-inheritance:
    :special-members:
    :undoc-members:
    :exclude-members: __dict__,__weakref__,__module__,__exit__
@@ -113,8 +106,7 @@ Matrix
 
 .. automodule:: pyrtl.rtllib.matrix
    :members:
-   :show-inheritance:
-   :special-members:
+   :special-members: __init__
    :undoc-members:
    :exclude-members: __dict__,__weakref__,__module__
 
@@ -127,9 +119,7 @@ Testing Utilities
 
 .. automodule:: pyrtl.rtllib.testingutils
    :members:
-   :show-inheritance:
    :special-members:
-   :undoc-members:
    :exclude-members: __dict__,__weakref__,__module__
 
 :ref:`Back to top of page <top-of-page-rtllib>`

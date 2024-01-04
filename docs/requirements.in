@@ -1,0 +1,5 @@
+pip-tools
+six
+sphinx
+sphinx-hoverxref
+sphinx_rtd_theme

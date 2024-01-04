@@ -1,12 +1,14 @@
 """Classes for executing and tracing circuit simulations."""
 
-from __future__ import print_function, unicode_literals
+from __future__ import print_function
 
-import sys
-import re
-import numbers
 import copy
+import math
+import numbers
+import os
+import re
 import six
+import sys
 
 from .pyrtlexceptions import PyrtlError, PyrtlInternalError
 from .core import working_block, PostSynthBlock, _PythonSanitizer
@@ -33,14 +35,16 @@ class Simulation(object):
     A Simulation step works as follows:
 
     1. Registers are updated:
-        a. (If this is the first step) With the default values passed in
+
+        1. (If this is the first step) With the default values passed in
            to the Simulation during instantiation and/or any reset values
            specified in the individual registers.
-        a. (Otherwise) With their next values calculated in the previous step
-           (`r` logic nets).
+        2. (Otherwise) With their next values calculated in the previous step
+           (``r`` logic nets).
+
     2. The new values of these registers as well as the values of block inputs
        are propagated through the combinational logic.
-    3. Memory writes are performed (`@` logic nets).
+    3. Memory writes are performed (``@`` logic nets).
     4. The current values of all wires are recorded in the trace.
     5. The next values for the registers are saved, ready to be applied at the
        beginning of the next step.
@@ -53,53 +57,57 @@ class Simulation(object):
     useful to reach into this class and access internal state directly.
     Of particular usefulness are:
 
-    * *.tracer*: stores the SimulationTrace in which results are stored
-    * *.value*: a map from every signal in the block to its current simulation value
-    * *.regvalue*: a map from register to its value on the next tick
-    * *.memvalue*: a map from memid to a dictionary of address: value
+    * ``.tracer``: stores the :class:`.SimulationTrace` in which results are stored
+    * ``.value``: a map from every signal in the block to its current simulation value
+    * ``.regvalue``: a map from register to its value on the next tick
+    * ``.memvalue``: a map from memid to a dictionary of address: value
     """
 
     simple_func = {  # OPS
         'w': lambda x: x,
         '~': lambda x: ~x,
-        '&': lambda l, r: l & r,
-        '|': lambda l, r: l | r,
-        '^': lambda l, r: l ^ r,
-        'n': lambda l, r: ~(l & r),
-        '+': lambda l, r: l + r,
-        '-': lambda l, r: l - r,
-        '*': lambda l, r: l * r,
-        '<': lambda l, r: int(l < r),
-        '>': lambda l, r: int(l > r),
-        '=': lambda l, r: int(l == r),
+        '&': lambda left, right: left & right,
+        '|': lambda left, right: left | right,
+        '^': lambda left, right: left ^ right,
+        'n': lambda left, right: ~(left & right),
+        '+': lambda left, right: left + right,
+        '-': lambda left, right: left - right,
+        '*': lambda left, right: left * right,
+        '<': lambda left, right: int(left < right),
+        '>': lambda left, right: int(left > right),
+        '=': lambda left, right: int(left == right),
         'x': lambda sel, f, t: f if (sel == 0) else t
     }
 
     def __init__(
             self, tracer=True, register_value_map={}, memory_value_map={},
             default_value=0, block=None):
-        """ Creates a new circuit simulator.
+        """Creates a new circuit simulator.
 
-        :param tracer: an instance of SimulationTrace used to store execution results.
-            Defaults to a new SimulationTrace with no params passed to it.  If None is
-            passed, no tracer is instantiated (which is good for long running simulations).
-            If the default (true) is passed, Simulation will create a new tracer automatically
-            which can be referenced by the member variable .tracer
-        :param register_value_map: Defines the initial value for the registers specified;
-            overrides the registers's reset_value. Format: {Register: value}.
+        :param SimulationTrace tracer: Stores execution results.  Defaults to a
+            new :class:`.SimulationTrace` with no params passed to it.  If None
+            is passed, no tracer is instantiated (which is good for long
+            running simulations).  If the default (true) is passed, Simulation
+            will create a new tracer automatically which can be referenced by
+            the member variable ``.tracer``
+        :param dict[Register, int] register_value_map: Defines the initial
+            value for the registers specified; overrides the registers's
+            ``reset_value``.
         :param memory_value_map: Defines initial values for many
             addresses in a single or multiple memory. Format: {Memory: {address: Value}}.
             Memory is a memory block, address is the address of a value
-        :param default_value: The value that all unspecified registers and
-            memories will initialize to (default 0). For registers, this is the value that
-            will be used if the particular register doesn't have a specified reset_value,
-            and isn't found in the register_value_map.
-        :param block: the hardware block to be traced (which might be of type PostSynthesisBlock).
-            defaults to the working block
+        :param int default_value: The value that all unspecified registers and
+            memories will initialize to (default 0). For registers, this is the
+            value that will be used if the particular register doesn't have a
+            specified ``reset_value``, and isn't found in the
+            `register_value_map`.
+        :param Block block: the hardware block to be traced (which might be of
+            type :class:`.PostSynthBlock`).  Defaults to the working block
 
-        Warning: Simulation initializes some things when called with __init__,
-        so changing items in the block for Simulation will likely break
-        the simulation.
+        Warning: Simulation initializes some things when called with
+        :meth:`~.Simulation.__init__`, so changing items in the block for
+        Simulation will likely break the simulation.
+
         """
 
         """ Creates object and initializes it with self._initialize.
@@ -176,23 +184,30 @@ class Simulation(object):
                                         copy.deepcopy(self.memvalue))
 
     def step(self, provided_inputs):
-        """ Take the simulation forward one cycle.
+        """Take the simulation forward one cycle.
 
-        :param provided_inputs: a dictionary mapping WireVectors to their values for this step
+        :param provided_inputs: a dictionary mapping WireVectors to their
+            values for this step
 
-        A step causes the block to be updated as follows, in order: (1) registers are updated
-        with their `next` values computed in the previous cycle; (2) block inputs and these new
-        register values propagate through the combinational logic; (3) memories are updated; and
-        (4) the `next` values of the registers are saved for use in step 1 of the next cycle.
+        A step causes the block to be updated as follows, in order:
 
-        All input wires must be in the provided_inputs in order for the simulation
-        to accept these values.
+        1. Registers are updated with their :attr:`~.Register.next` values
+           computed in the previous cycle
+        2. Block inputs and these new register values propagate through the
+           combinational logic
+        3. Memories are updated
+        4. The :attr:`~.Register.next` values of the registers are saved for
+           use in step 1 of the next cycle.
 
-        Example: if we have inputs named 'a' and 'x', we can call: ::
+        All input wires must be in the `provided_inputs` in order for the
+        simulation to accept these values.
+
+        Example: if we have inputs named ``a`` and ``x``, we can call::
 
             sim.step({'a': 1, 'x': 23})
 
         to simulate a cycle with values 1 and 23 respectively.
+
         """
 
         # Check that all Input have a corresponding provided_input
@@ -252,39 +267,53 @@ class Simulation(object):
 
     def step_multiple(self, provided_inputs={}, expected_outputs={}, nsteps=None,
                       file=sys.stdout, stop_after_first_error=False):
-        """ Take the simulation forward N cycles, based on the number of values for each input
+        """Take the simulation forward N cycles, based on the number of values
+        for each input
 
-        :param provided_inputs: a dictionary mapping wirevectors to their values for N steps
-        :param expected_outputs: a dictionary mapping wirevectors to their expected values
-            for N steps; use '?' to indicate you don't care what the value at that step is
-        :param nsteps: number of steps to take (defaults to None, meaning step for each
-            supplied input value)
-        :param file: where to write the output (if there are unexpected outputs detected)
-        :param stop_after_first_error: a boolean flag indicating whether to stop the simulation
-            after encountering the first error (defaults to False)
+        :param provided_inputs: a dictionary mapping WireVectors to their
+            values for N steps
+        :param expected_outputs: a dictionary mapping WireVectors to their
+            expected values for N steps; use ``?`` to indicate you don't care
+            what the value at that step is
+        :param nsteps: number of steps to take (defaults to None, meaning step
+            for each supplied input value)
+        :param file: where to write the output (if there are unexpected outputs
+            detected)
+        :param stop_after_first_error: a boolean flag indicating whether to
+            stop the simulation after encountering the first error (defaults to
+            False)
 
-        All input wires must be in the provided_inputs in order for the simulation
-        to accept these values. Additionally, the length of the array of provided values for each
-        input must be the same.
+        All input wires must be in the `provided_inputs` in order for the
+        simulation to accept these values. Additionally, the length of the
+        array of provided values for each input must be the same.
 
-        When 'nsteps' is specified, then it must be *less than or equal* to the number of values
-        supplied for each input when 'provided_inputs' is non-empty. When 'provided_inputs' is
-        empty (which may be a legitimate case for a design that takes no inputs), then 'nsteps'
-        will be used.  When 'nsteps' is not specified, then the simulation will take the number
-        of steps equal to the number of values supplied for each input.
+        When `nsteps` is specified, then it must be *less than or equal* to the
+        number of values supplied for each input when `provided_inputs` is
+        non-empty. When `provided_inputs` is empty (which may be a legitimate
+        case for a design that takes no inputs), then `nsteps` will be used.
+        When `nsteps` is not specified, then the simulation will take the
+        number of steps equal to the number of values supplied for each input.
 
-        Example: if we have inputs named 'a' and 'b' and output 'o', we can call:
-        sim.step_multiple({'a': [0,1], 'b': [23,32]}, {'o': [42, 43]}) to simulate 2 cycles,
-        where in the first cycle 'a' and 'b' take on 0 and 23, respectively, and 'o' is expected to
-        have the value 42, and in the second cycle 'a' and 'b' take on 1 and 32, respectively, and
-        'o' is expected to have the value 43.
+        Example: if we have inputs named ``a`` and ``b`` and output ``o``, we
+        can call::
 
-        If your values are all single digit, you can also specify them in a single string, e.g.
-        sim.step_multiple({'a': '01', 'b': '01'}) will simulate 2 cycles, with 'a' and 'b' taking on
-        0 and 0, respectively, on the first cycle and '1' and '1', respectively, on the second
-        cycle.
+            sim.step_multiple({'a': [0,1], 'b': [23,32]}, {'o': [42, 43]})
 
-        Example: if the design had no inputs, like so: ::
+        to simulate 2 cycles, where in the first cycle ``a`` and ``b`` take on
+        0 and 23, respectively, and ``o`` is expected to have the value 42, and
+        in the second cycle ``a`` and ``b`` take on 1 and 32, respectively, and
+        ``o`` is expected to have the value 43.
+
+        If your values are all single digit, you can also specify them in a
+        single string, e.g.::
+
+            sim.step_multiple({'a': '01', 'b': '01'})
+
+        will simulate 2 cycles, with ``a`` and ``b`` taking on 0 and 0,
+        respectively, on the first cycle and 1 and 1, respectively, on the
+        second cycle.
+
+        Example: if the design had no inputs, like so::
 
             a = pyrtl.Register(8)
             b = pyrtl.Output(8, 'b')
@@ -295,8 +324,8 @@ class Simulation(object):
             sim = pyrtl.Simulation()
             sim.step_multiple(nsteps=3)
 
-        Using sim.step_multiple(nsteps=3) simulates 3 cycles, after which we would expect the value
-        of 'b' to be 2.
+        Using ``sim.step_multiple(nsteps=3)`` simulates 3 cycles, after which
+        we would expect the value of ``b`` to be 2.
 
         """
 
@@ -318,12 +347,14 @@ class Simulation(object):
         if nsteps < 1:
             raise PyrtlError("must simulate at least one step")
 
-        if list(filter(lambda l: len(l) < nsteps, provided_inputs.values())):
+        if list(filter(lambda value: len(value) < nsteps,
+                       provided_inputs.values())):
             raise PyrtlError(
                 "must supply a value for each provided wire "
                 "for each step of simulation")
 
-        if list(filter(lambda l: len(l) < nsteps, expected_outputs.values())):
+        if list(filter(lambda value: len(value) < nsteps,
+                       expected_outputs.values())):
             raise PyrtlError(
                 "any expected outputs must have a supplied value "
                 "each step of simulation")
@@ -363,15 +394,16 @@ class Simulation(object):
             file.flush()
 
     def inspect(self, w):
-        """ Get the value of a wirevector in the last simulation cycle.
+        """ Get the value of a WireVector in the last simulation cycle.
 
-        :param w: the name of the WireVector to inspect
+        :param str w: the name of the WireVector to inspect
             (passing in a WireVector instead of a name is deprecated)
         :return: value of w in the current step of simulation
 
         Will throw KeyError if w does not exist in the simulation.
 
-        Examples ::
+        Example::
+
             sim.inspect('a') == 10  # returns value of wire 'a' at current step
         """
         wire = self.block.wirevector_by_name.get(w, w)
@@ -466,14 +498,16 @@ class FastSimulation(object):
     A Simulation step works as follows:
 
     1. Registers are updated:
-        a. (If this is the first step) With the default values passed in
+
+        1. (If this is the first step) With the default values passed in
            to the Simulation during instantiation and/or any reset values
            specified in the individual registers.
-        a. (Otherwise) With their next values calculated in the previous step
-           (`r` logic nets).
+        2. (Otherwise) With their next values calculated in the previous step
+           (``r`` logic nets).
+
     2. The new values of these registers as well as the values of block inputs
        are propagated through the combinational logic.
-    3. Memory writes are performed (`@` logic nets).
+    3. Memory writes are performed (``@`` logic nets).
     4. The current values of all wires are recorded in the trace.
     5. The next values for the registers are saved, ready to be applied at the
        beginning of the next step.
@@ -499,12 +533,12 @@ class FastSimulation(object):
         """ Instantiates a Fast Simulation instance.
 
         The interface for FastSimulation and Simulation should be almost identical.
-        In addition to the Simualtion arguments, FastSimulation additional takes:
+        In addition to the Simulation arguments, FastSimulation additionally takes:
 
         :param code_file: The file in which to store a copy of the generated
-            python code. Defaults to no code being stored.
+            Python code. Defaults to no code being stored.
 
-        Look at Simulation.__init__ for descriptions for the other parameters.
+        Look at :meth:`.Simulation.__init__` for descriptions for the other parameters.
 
         This builds the Fast Simulation compiled Python code, so all changes
         to the circuit after calling this function will not be reflected in
@@ -571,13 +605,19 @@ class FastSimulation(object):
     def step(self, provided_inputs):
         """ Run the simulation for a cycle.
 
-        :param provided_inputs: a dictionary mapping WireVectors (or their names)
-          to their values for this step (eg: `{wire: 3, "wire_name": 17}`)
+        :param provided_inputs: a dictionary mapping WireVectors (or their
+                                names) to their values for this step (eg:
+                                `{wire: 3, "wire_name": 17}`)
 
-        A step causes the block to be updated as follows, in order: (1) registers are updated
-        with their `next` values computed in the previous cycle; (2) block inputs and these new
-        register values propagate through the combinational logic; (3) memories are updated; and
-        (4) the `next` values of the registers are saved for use in step 1 of the next cycle.
+        A step causes the block to be updated as follows, in order:
+
+        1. Registers are updated with their :attr:`~.Register.next` values
+           computed in the previous cycle
+        2. Block inputs and these new register values propagate through the
+           combinational logic
+        3. Memories are updated
+        4. The :attr:`~.Register.next` values of the registers are saved for
+           use in step 1 of the next cycle.
         """
         # validate_inputs
         for wire, value in provided_inputs.items():
@@ -608,40 +648,53 @@ class FastSimulation(object):
 
     def step_multiple(self, provided_inputs={}, expected_outputs={}, nsteps=None,
                       file=sys.stdout, stop_after_first_error=False):
-        """ Take the simulation forward N cycles, where N is the number of values
-         for each provided input.
+        """Take the simulation forward N cycles, where N is the number of
+         values for each provided input.
 
-        :param provided_inputs: a dictionary mapping wirevectors to their values for N steps
-        :param expected_outputs: a dictionary mapping wirevectors to their expected values
-            for N steps; use '?' to indicate you don't care what the value at that step is
-        :param nsteps: number of steps to take (defaults to None, meaning step for each
-            supplied input value)
-        :param file: where to write the output (if there are unexpected outputs detected)
-        :param stop_after_first_error: a boolean flag indicating whether to stop the simulation
-            after the step where the first errors are encountered (defaults to False)
+        :param provided_inputs: a dictionary mapping WireVectors to their
+            values for N steps
+        :param expected_outputs: a dictionary mapping WireVectors to their
+            expected values for N steps; use ``?`` to indicate you don't care
+            what the value at that step is
+        :param nsteps: number of steps to take (defaults to None, meaning step
+            for each supplied input value)
+        :param file: where to write the output (if there are unexpected outputs
+            detected)
+        :param stop_after_first_error: a boolean flag indicating whether to
+            stop the simulation after the step where the first errors are
+            encountered (defaults to False)
 
-        All input wires must be in the provided_inputs in order for the simulation
-        to accept these values. Additionally, the length of the array of provided values for each
-        input must be the same.
+        All input wires must be in the `provided_inputs` in order for the
+        simulation to accept these values. Additionally, the length of the
+        array of provided values for each input must be the same.
 
-        When 'nsteps' is specified, then it must be *less than or equal* to the number of values
-        supplied for each input when 'provided_inputs' is non-empty. When 'provided_inputs' is
-        empty (which may be a legitimate case for a design that takes no inputs), then 'nsteps'
-        will be used.  When 'nsteps' is not specified, then the simulation will take the number
-        of steps equal to the number of values supplied for each input.
+        When `nsteps` is specified, then it must be *less than or equal* to the
+        number of values supplied for each input when `provided_inputs` is
+        non-empty. When `provided_inputs` is empty (which may be a legitimate
+        case for a design that takes no inputs), then `nsteps` will be used.
+        When `nsteps` is not specified, then the simulation will take the
+        number of steps equal to the number of values supplied for each input.
 
-        Example: if we have inputs named 'a' and 'b' and output 'o', we can call:
-        sim.step_multiple({'a': [0,1], 'b': [23,32]}, {'o': [42, 43]}) to simulate 2 cycles,
-        where in the first cycle 'a' and 'b' take on 0 and 23, respectively, and 'o' is expected to
-        have the value 42, and in the second cycle 'a' and 'b' take on 1 and 32, respectively, and
-        'o' is expected to have the value 43.
+        Example: if we have inputs named ``a`` and ``b`` and output ``o``, we
+        can call::
 
-        If your values are all single digit, you can also specify them in a single string, e.g.
-        sim.step_multiple({'a': '01', 'b': '01'}) will simulate 2 cycles, with 'a' and 'b' taking on
-        0 and 0, respectively, on the first cycle and '1' and '1', respectively, on the second
-        cycle.
+            sim.step_multiple({'a': [0,1], 'b': [23,32]}, {'o': [42, 43]})
 
-        Example: if the design had no inputs, like so:
+        to simulate 2 cycles, where in the first cycle ``a`` and ``b`` take on
+        0 and 23, respectively, and ``o`` is expected to have the value 42, and
+        in the second cycle ``a`` and ``b`` take on 1 and 32, respectively, and
+        ``o`` is expected to have the value 43.
+
+        If your values are all single digit, you can also specify them in a
+        single string, e.g.::
+
+            sim.step_multiple({'a': '01', 'b': '01'})
+
+        will simulate 2 cycles, with ``a`` and ``b`` taking on 0 and 0,
+        respectively, on the first cycle and 1 and 1, respectively, on the
+        second cycle.
+
+        Example: if the design had no inputs, like so::
 
             a = pyrtl.Register(8)
             b = pyrtl.Output(8, 'b')
@@ -652,8 +705,8 @@ class FastSimulation(object):
             sim = pyrtl.Simulation()
             sim.step_multiple(nsteps=3)
 
-        Using sim.step_multiple(nsteps=3) simulates 3 cycles, after which we would expect the value
-        of 'b' to be 2.
+        Using ``sim.step_multiple(nsteps=3)`` simulates 3 cycles, after which
+        we would expect the value of ``b`` to be 2.
 
         """
 
@@ -675,12 +728,14 @@ class FastSimulation(object):
         if nsteps < 1:
             raise PyrtlError("must simulate at least one step")
 
-        if list(filter(lambda l: len(l) < nsteps, provided_inputs.values())):
+        if list(filter(lambda value: len(value) < nsteps,
+                       provided_inputs.values())):
             raise PyrtlError(
                 "must supply a value for each provided wire "
                 "for each step of simulation")
 
-        if list(filter(lambda l: len(l) < nsteps, expected_outputs.values())):
+        if list(filter(lambda value: len(value) < nsteps,
+                       expected_outputs.values())):
             raise PyrtlError(
                 "any expected outputs must have a supplied value "
                 "each step of simulation")
@@ -729,13 +784,13 @@ class FastSimulation(object):
             file.flush()
 
     def inspect(self, w):
-        """ Get the value of a wirevector in the last simulation cycle.
+        """ Get the value of a WireVector in the last simulation cycle.
 
-        :param w: the name of the WireVector to inspect
+        :param str w: the name of the WireVector to inspect
             (passing in a WireVector instead of a name is deprecated)
-        :return: value of w in the current step of simulation
+        :return: value of `w` in the current step of simulation
 
-        Will throw KeyError if w is not being tracked in the simulation.
+        Will throw KeyError if `w` is not being tracked in the simulation.
         """
         try:
             return self.context[self._to_name(w)]
@@ -832,16 +887,16 @@ class FastSimulation(object):
             'w': lambda x: x,
             'r': lambda x: x,
             '~': lambda x: '(~' + x + ')',
-            '&': lambda l, r: '(' + l + '&' + r + ')',
-            '|': lambda l, r: '(' + l + '|' + r + ')',
-            '^': lambda l, r: '(' + l + '^' + r + ')',
-            'n': lambda l, r: '(~(' + l + '&' + r + '))',
-            '+': lambda l, r: '(' + l + '+' + r + ')',
-            '-': lambda l, r: '(' + l + '-' + r + ')',
-            '*': lambda l, r: '(' + l + '*' + r + ')',
-            '<': lambda l, r: 'int(' + l + '<' + r + ')',
-            '>': lambda l, r: 'int(' + l + '>' + r + ')',
-            '=': lambda l, r: 'int(' + l + '==' + r + ')',
+            '&': lambda left, right: '(' + left + '&' + right + ')',
+            '|': lambda left, right: '(' + left + '|' + right + ')',
+            '^': lambda left, right: '(' + left + '^' + right + ')',
+            'n': lambda left, right: '(~(' + left + '&' + right + '))',
+            '+': lambda left, right: '(' + left + '+' + right + ')',
+            '-': lambda left, right: '(' + left + '-' + right + ')',
+            '*': lambda left, right: '(' + left + '*' + right + ')',
+            '<': lambda left, right: 'int(' + left + '<' + right + ')',
+            '>': lambda left, right: 'int(' + left + '>' + right + ')',
+            '=': lambda left, right: 'int(' + left + '==' + right + ')',
             'x': lambda sel, f, t: '({}) if ({}==0) else ({})'.format(f, sel, t),
         }
 
@@ -934,33 +989,54 @@ class FastSimulation(object):
 #
 
 
-class _WaveRendererBase(object):
-    _tick, _up, _down, _x, _low, _high, _revstart, _revstop = ('' for i in range(8))
+class WaveRenderer(object):
+    """Render a SimulationTrace to the terminal.
 
-    def __init__(self):
-        super(_WaveRendererBase, self).__init__()
-        self.prior_val = None
-        self.prev_wire = None
+    See ``examples/renderer-demo.py``, which renders traces with various
+    options. You can choose a default renderer by exporting the
+    ``PYRTL_RENDERER`` environment variable. See the documentation for subclasses
+    of :py:class:`RendererConstants`.
 
-    def tick_segment(self, n, symbol_len, segment_size):
-        num_tick = self._tick + str(n)
-        return num_tick.ljust(symbol_len * segment_size)
+    """
+    def __init__(self, constants):
+        """Instantiate a WaveRenderer.
 
-    def render_val(self, w, n, current_val, symbol_len, repr_func, repr_per_name):
-        if w is not self.prev_wire:
-            self.prev_wire = w
-            self.prior_val = current_val
-        out = self._render_val_with_prev(w, n, current_val, symbol_len, repr_func, repr_per_name)
-        self.prior_val = current_val
-        return out
+        :param constants: Subclass of :py:class:`RendererConstants` that
+            specifies the ASCII/Unicode characters to use for rendering
+            waveforms.
 
-    def _render_val_with_prev(self, w, n, current_val, symbol_len, repr_func, repr_per_name):
-        """Return a string encoding the given value in a waveform.
+        """
+        self.constants = constants
 
-        :param w: The WireVector we are rendering to a waveform
-        :param n: An integer from 0 to segment_len-1
-        :param current_val: the value to be rendered
-        :param symbol_len: and integer for how big to draw the current value
+    def render_ruler_segment(self, n, cycle_len, segment_size, maxtracelen):
+        """Render a major tick padded to segment_size.
+
+        :param n: Cycle number for the major tick mark.
+        :param cycle_len: Rendered length of each cycle, in characters.
+        :param segment_size: Length between major tick marks, in cycles.
+        :param maxtracelen: Length of the longest trace, in cycles.
+        """
+        # Render a major tick mark followed by its label (n).
+        major_tick = self.constants._tick + str(n)
+        # Number of cycles occupied by major_tick.
+        major_tick_cycles = math.ceil(len(major_tick) / cycle_len)
+        # If major_tick can't fit in segment_size, drop most significant digits
+        # until it fits.
+        if major_tick_cycles > segment_size:
+            major_tick = self.constants._tick + major_tick[:segment_size - 1]
+
+        # Do not render past maxtracelen.
+        if n + segment_size >= maxtracelen:
+            segment_size = maxtracelen - n
+        # Pad major_tick out to segment_size.
+        ticks = major_tick.ljust(cycle_len * segment_size)
+        return ticks
+
+    def val_to_str(self, value, wire_name, repr_func, repr_per_name):
+        """Return a string representing 'value'.
+
+        :param value: The value to convert to string.
+        :param wire_name: Name of the wire that produced this value.
         :param repr_func: function to use for representing the current_val;
             examples are 'hex', 'oct', 'bin', 'str' (for decimal), or even the name
             of an IntEnum class you know the value will belong to. Defaults to 'hex'.
@@ -968,61 +1044,300 @@ class _WaveRendererBase(object):
             value and returns a user-defined representation. If a signal name is
             not found in the map, the argument `repr_func` will be used instead.
 
+        :return: a string representing 'value'.
+
+        """
+        f = repr_per_name.get(wire_name)
+        if f is not None:
+            return str(f(value))
+        else:
+            return str(repr_func(value))
+
+    def render_val(self, w, prior_val, current_val, symbol_len, cycle_len,
+                   repr_func, repr_per_name, prev_line):
+        """Return a string encoding the given value in a waveform.
+
+        :param w: The WireVector we are rendering to a waveform
+        :param n: An integer from 0 to segment_len-1
+        :param prior_val: Last value rendered. None if there was no last value.
+        :param current_val: the value to be rendered
+        :param symbol_len: Width of each value, in characters.
+        :param cycle_len: Width of each cycle, in characters.
+        :param repr_func: function to use for representing the current_val;
+            examples are 'hex', 'oct', 'bin', 'str' (for decimal), or even the name
+            of an IntEnum class you know the value will belong to. Defaults to 'hex'.
+        :param repr_per_name: Map from signal name to a function that takes in the signal's
+            value and returns a user-defined representation. If a signal name is
+            not found in the map, the argument `repr_func` will be used instead.
+        :param prev_line: If True, render the gap between signals. If False,
+            render the main signal. This is useful for rendering signals across
+            two lines, see the _prev_line* fields in RendererConstants.
+
         Returns a string of printed length symbol_len that will draw the
         representation of current_val.  The input prior_val is used to
         render transitions.
         """
-        def to_str(v):
-            f = repr_per_name.get(w.name)
-            if f is not None:
-                return str(f(v))
-            else:
-                return str(repr_func(v))
-
-        sl = symbol_len - 1
         if len(w) > 1:
-            out = self._revstart
-            if current_val != self.prior_val:
-                out += self._x + to_str(current_val).rstrip('L').ljust(sl)[:sl]
-            elif n == 0:
-                out += to_str(current_val).rstrip('L').ljust(symbol_len)[:symbol_len]
+            if prev_line:
+                # Bus wires are currently never rendered across multiple lines.
+                return ''
+
+            out = ''
+            if current_val != prior_val:
+                if prior_val is not None:
+                    out += self.constants._x
+                out += (self.val_to_str(current_val, w.name, repr_func,
+                                        repr_per_name).rstrip('L')
+                        .ljust(symbol_len)[:symbol_len])
             else:
-                out += ' ' * symbol_len
-            out += self._revstop
+                out += ' ' * cycle_len
         else:
+            if prev_line:
+                low = self.constants._prev_line_low
+                high = self.constants._prev_line_high
+                up = self.constants._prev_line_up
+                down = self.constants._prev_line_down
+            else:
+                low = self.constants._low
+                high = self.constants._high
+                up = self.constants._up
+                down = self.constants._down
+
             pretty_map = {
-                (0, 0): self._low + self._low * sl,
-                (0, 1): self._up + self._high * sl,
-                (1, 0): self._down + self._low * sl,
-                (1, 1): self._high + self._high * sl,
+                (None, 0): low * symbol_len,
+                (None, 1): high * symbol_len,
+                (0, 0): low * cycle_len,
+                (0, 1): up + high * symbol_len,
+                (1, 0): down + low * symbol_len,
+                (1, 1): high * cycle_len,
             }
-            out = pretty_map[(self.prior_val, current_val)]
+            out = pretty_map[(prior_val, current_val)]
         return out
 
 
-class Utf8WaveRenderer(_WaveRendererBase):
-    _tick = u'\u258f'
-    _up, _down = u'\u2571', u'\u2572'
-    _x, _low, _high = u'\u2573', u'\u005f', u'\u203e'
-    _revstart, _revstop = '\x1B[7m', '\x1B[0m'
+class RendererConstants():
+    """Abstract base class for renderer constants.
+
+    These constants determine which characters are used to render waveforms in
+    a terminal.
+
+    .. inheritance-diagram:: pyrtl.simulation.Utf8RendererConstants
+                             pyrtl.simulation.Utf8AltRendererConstants
+                             pyrtl.simulation.PowerlineRendererConstants
+                             pyrtl.simulation.Cp437RendererConstants
+                             pyrtl.simulation.AsciiRendererConstants
+        :parts: 1
+
+    """
+    # Print _tick before rendering a ruler segment. Must have a display length
+    # of 1 character.
+    _tick = ''
+
+    # Print _up when a binary wire transitions from low to high. Print _down
+    # when a binary wire transitions from high to low. _up and _down must have
+    # display length of _chars_between_cycles characters.
+    _up, _down = '', ''
+
+    # Print _low when a binary wire maintains a low value, and print _high when
+    # a binary wire maintains a high value. _low and _high must have display
+    # length of 1 character.
+    _low, _high = '', ''
+
+    # These are like _up, _down, _low, _high, except they are printed on the
+    # previous line. These are useful for displaying a binary wire across two
+    # lines.
+    _prev_line_up, _prev_line_down = '', ''
+    _prev_line_low, _prev_line_high = '', ''
+
+    # Print _bus_start before rendering a bus wire, and print _bus_stop after
+    # rendering a bus wire. _bus_start and _bus_stop must have zero display
+    # length characters. Escape codes never count towards display length.
+    _bus_start, _bus_stop = '', ''
+    # Print _x when a bus wire changes value. _low must have display length
+    # of _chars_between_cycles characters.
+    _x = ''
+
+    # Number of characters between cycles. The cycle changes halfway between
+    # this width. The first half of this width belongs to the previous cycle and
+    # the second half of this width belongs to the next cycle.
+    _chars_between_cycles = 0
 
 
-class AsciiWaveRenderer(_WaveRendererBase):
-    """ Poor Man's wave renderer (for windows cmd compatibility)"""
-    _tick = '-'
-    _up, _down = '/', '\\'
-    _x, _low, _high = 'x', '_', '-'
-    _revstart, _revstop = '', ''
+class Utf8RendererConstants(RendererConstants):
+    """UTF-8 renderer constants. These should work in most terminals.
+
+    Single-bit WireVectors are rendered as square waveforms, with vertical
+    rising and falling edges. Multi-bit WireVector values are rendered in
+    reverse-video rectangles.
+
+    This is the default renderer on non-Windows platforms.
+
+    Enable this renderer by default by setting the ``PYRTL_RENDERER``
+    environment variable to ``utf-8``.
+
+    .. image:: ../docs/screenshots/pyrtl-statemachine-utf-8.png
+
+    """
+    # Start reverse-video, reset all attributes
+    _bus_start, _bus_stop = '\x1B[7m', '\x1B[0m'
+
+    _tick = '▕'
+
+    _up, _down = '▁▏', '▕▁'
+    _low, _high = '▁', ' '
+
+    _prev_line_up, _prev_line_down = ' ▁', '▁ '
+    _prev_line_low, _prev_line_high = ' ', '▁'
+
+    _x = '▕ '
+
+    # Number of characters needed between cycles. The cycle changes halfway
+    # between this width (2), so the first character belongs to the previous
+    # cycle and the second character belongs to the next cycle.
+    _chars_between_cycles = 2
+
+
+class Utf8AltRendererConstants(RendererConstants):
+    """Alternative UTF-8 renderer constants.
+
+    Single-bit WireVectors are rendered as waveforms with sloped rising and
+    falling edges. Multi-bit WireVector values are rendered in reverse-video
+    rectangles.
+
+    Compared to Utf8RendererConstants, this renderer is more compact because it
+    uses one character between cycles instead of two.
+
+    Enable this renderer by default by setting the ``PYRTL_RENDERER``
+    environment variable to ``utf-8-alt``.
+
+    .. image:: ../docs/screenshots/pyrtl-statemachine-utf-8-alt.png
+
+    """
+    # Start reverse-video, reset all attributes
+    _bus_start, _bus_stop = '\x1B[7m', '\x1B[0m'
+
+    _tick = '│'
+
+    _up, _down = '╱', '╲'
+    _low, _high = '▁', '▔'
+
+    _x = '┃'
+
+    # Number of characters needed between cycles. The cycle changes halfway
+    # between this width (1), so the first character belongs to the previous
+    # cycle and the second character belongs to the next cycle.
+    _chars_between_cycles = 1
+
+
+class PowerlineRendererConstants(Utf8RendererConstants):
+    """Powerline renderer constants. Font must include powerline glyphs.
+
+    This render is closest to a traditional logic analyzer. Single-bit
+    WireVectors are rendered as square waveforms, with vertical rising and
+    falling edges. Multi-bit WireVector values are rendered in reverse-video
+    hexagons.
+
+    This renderer requires a `terminal font that supports Powerline glyphs
+    <https://github.com/powerline/fonts>`_
+
+    Enable this renderer by default by setting the ``PYRTL_RENDERER``
+    environment variable to ``powerline``.
+
+    .. image:: ../docs/screenshots/pyrtl-statemachine.png
+
+    """
+    # Start reverse-video, reset all attributes
+    _bus_start, _bus_stop = '\x1B[7m', '\x1B[0m'
+
+    _x = _bus_stop + '' + _bus_start
+
+
+class Cp437RendererConstants(RendererConstants):
+    """Code page 437 renderer constants (for windows ``cmd`` compatibility).
+
+    Single-bit WireVectors are rendered as square waveforms, with vertical
+    rising and falling edges. Multi-bit WireVector values are rendered between
+    vertical bars.
+
+    `Code page 437 <https://en.wikipedia.org/wiki/Code_page_437>`_ is also
+    known as 8-bit ASCII. This is the default renderer on Windows platforms.
+
+    Compared to Utf8RendererConstants, this renderer is more compact because it
+    uses one character between cycles instead of two, but the wire names are
+    vertically aligned at the bottom of each waveform.
+
+    Enable this renderer by default by setting the ``PYRTL_RENDERER``
+    environment variable to ``cp437``.
+
+    .. image:: ../docs/screenshots/pyrtl-statemachine-cp437.png
+
+    """
+    _tick = '│'
+
+    _up, _down = '┘', '└'
+    _low, _high = '─', ' '
+
+    _prev_line_up, _prev_line_down = '┌', '┐'
+    _prev_line_low, _prev_line_high = ' ', '─'
+
+    _x = '│'
+
+    _chars_between_cycles = 1
+
+
+class AsciiRendererConstants(RendererConstants):
+    """7-bit ASCII renderer constants. These should work anywhere.
+
+    Single-bit WireVectors are rendered as waveforms with sloped rising and
+    falling edges. Multi-bit WireVector values are rendered between vertical
+    bars.
+
+    Enable this renderer by default by setting the ``PYRTL_RENDERER``
+    environment variable to ``ascii``.
+
+    .. image:: ../docs/screenshots/pyrtl-statemachine-ascii.png
+
+    """
+    _tick = '|'
+
+    _up, _down = ',', '.'
+    _low, _high = '_', '-'
+
+    _x = '|'
+
+    _chars_between_cycles = 1
 
 
 def default_renderer():
-    import sys
-    try:
-        if str(sys.stdout.encoding).lower() == "utf-8":
-            return Utf8WaveRenderer
-    except Exception:
-        pass
-    return AsciiWaveRenderer
+    """Select renderer constants based on environment or auto-detection."""
+    renderer = ''
+    if 'PYRTL_RENDERER' in os.environ:
+        # Use user-specified renderer constants.
+        renderer = os.environ['PYRTL_RENDERER']
+    elif 'PROMPT' in os.environ:
+        # Windows Command Prompt, use code page 437 renderer constants.
+        renderer = 'cp437'
+    else:
+        # Use UTF-8 renderer constants by default.
+        renderer = 'utf-8'
+
+    renderer_map = {
+        'powerline': PowerlineRendererConstants(),
+        'utf-8': Utf8RendererConstants(),
+        'utf-8-alt': Utf8AltRendererConstants(),
+        'cp437': Cp437RendererConstants(),
+        'ascii': AsciiRendererConstants()
+    }
+
+    if renderer in renderer_map:
+        constants = renderer_map[renderer]
+    else:
+        print(f"WARNING: Unsupported $PYRTL_RENDERER value '{renderer}' "
+              f"supported values are ({' '.join(renderer_map.keys())}). "
+              'Defaulting to utf-8')
+        constants = Utf8RendererConstants()
+
+    return WaveRenderer(constants)
 
 
 def _trace_sort_key(w):
@@ -1069,7 +1384,7 @@ class SimulationTrace(object):
 
         :param wires_to_track: The wires that the tracer should track.
             If unspecified, will track all explicitly-named wires.
-            If set to 'all', will track all wires, including internal wires.
+            If set to ``'all'``, will track all wires, including internal wires.
         :param block: Block containing logic to trace
         """
         self.block = working_block(block)
@@ -1105,7 +1420,7 @@ class SimulationTrace(object):
         return len(value_list)
 
     def add_step(self, value_map):
-        """ Add the values in value_map to the end of the trace. """
+        """ Add the values in `value_map` to the end of the trace. """
         if len(self.trace) == 0:
             raise PyrtlError('error, simulation trace needs at least 1 signal to track '
                              '(by default, unnamed signals are not traced -- try either passing '
@@ -1121,13 +1436,14 @@ class SimulationTrace(object):
                 self.trace[wire_name].append(value_map[wire_name])
 
     def add_fast_step(self, fastsim):
-        """ Add the fastsim context to the trace. """
+        """ Add the `fastsim` context to the trace. """
         for wire_name in self.trace:
             self.trace[wire_name].append(fastsim.context[wire_name])
 
     def print_trace(self, file=sys.stdout, base=10, compact=False):
         """
         Prints a list of wires and their current values.
+
         :param int base: the base the values are to be printed in
         :param bool compact: whether to omit spaces in output lines
         """
@@ -1154,18 +1470,22 @@ class SimulationTrace(object):
         file.flush()
 
     def print_vcd(self, file=sys.stdout, include_clock=False):
-        """ Print the trace out as a VCD File for use in other tools.
+        """Print the trace out as a VCD File for use in other tools.
 
         :param file: file to open and output vcd dump to.
-        :param include_clock: boolean specifying if the implicit clk should be included.
+        :param include_clock: boolean specifying if the implicit clk should be
+                              included.
 
-        Dumps the current trace to file as a "value change dump" file.  The file parameter
-        defaults to _stdout_ and the include_clock defaults to False.
+        Dumps the current trace to file as a `value change dump
+        <https://en.wikipedia.org/wiki/Value_change_dump>`_ file.  The file
+        parameter defaults to ``stdout`` and the `include_clock` defaults to
+        False.
 
-        Examples ::
+        Examples::
 
             sim_trace.print_vcd()
             sim_trace.print_vcd("my_waveform.vcd", include_clock=True)
+
         """
         # dump header info
         # file_timestamp = time.strftime("%a, %d %b %Y %H:%M:%S (UTC/GMT)", time.gmtime())
@@ -1212,29 +1532,26 @@ class SimulationTrace(object):
         file.flush()
 
     def render_trace(
-            self, trace_list=None, file=sys.stdout, render_cls=default_renderer(),
-            symbol_len=5, repr_func=hex, repr_per_name={}, segment_size=5,
-            segment_delim=' ', extra_line=True):
+            self, trace_list=None, file=sys.stdout, renderer=default_renderer(),
+            symbol_len=None, repr_func=hex, repr_per_name={}, segment_size=1):
 
         """ Render the trace to a file using unicode and ASCII escape sequences.
 
-        :param trace_list: A list of signal names to be output in the specified order.
+        :param list[str] trace_list: A list of signal names to be output in the specified order.
         :param file: The place to write output, default to stdout.
-        :param render_cls: A class that translates traces into output bytes.
-        :param symbol_len: The "length" of each rendered cycle in characters.
+        :param WaveRenderer renderer: An object that translates traces into output bytes.
+        :param int symbol_len: The "length" of each rendered value in characters.
             If None, the length will be automatically set such that the largest
             represented value fits.
         :param repr_func: Function to use for representing each value in the trace;
-            examples are 'hex', 'oct', 'bin', and 'str' (for decimal). Defaults to 'hex'.
+            examples are ``hex``, ``oct``, ``bin``, and ``str`` (for decimal). Defaults to ``hex``.
         :param repr_per_name: Map from signal name to a function that takes in the signal's
             value and returns a user-defined representation. If a signal name is
             not found in the map, the argument `repr_func` will be used instead.
-        :param segment_size: Traces are broken in the segments of this number of cycles.
-        :param segment_delim: The character to be output between segments.
-        :param extra_line: A Boolean to determine if we should print a blank line between signals.
+        :param int segment_size: Traces are broken in the segments of this number of cycles.
 
         The resulting output can be viewed directly on the terminal or looked
-        at with "more" or "less -R" which both should handle the ASCII escape
+        at with :program:`more` or :program:`less -R` which both should handle the ASCII escape
         sequences used in rendering.
         """
         if _currently_in_jupyter_notebook():
@@ -1256,30 +1573,51 @@ class SimulationTrace(object):
             display(Javascript(js_stuff))
         else:
             self.render_trace_to_text(
-                trace_list=trace_list, file=file, render_cls=render_cls,
+                trace_list=trace_list, file=file, renderer=renderer,
                 symbol_len=symbol_len, repr_func=repr_func, repr_per_name=repr_per_name,
-                segment_size=segment_size, segment_delim=segment_delim, extra_line=extra_line)
+                segment_size=segment_size)
 
     def render_trace_to_text(
-            self, trace_list, file, render_cls,
-            symbol_len, repr_func, repr_per_name, segment_size, segment_delim, extra_line):
-
-        renderer = render_cls()
+            self, trace_list, file, renderer,
+            symbol_len, repr_func, repr_per_name, segment_size):
 
         def formatted_trace_line(wire, trace):
-            heading = wire.rjust(maxnamelen) + ' '
-            trace_line = ''
+            first_trace_line = ''
+            second_trace_line = ''
+            prior_val = None
+            is_bus = len(self._wires[wire]) > 1
+            if is_bus:
+                second_trace_line += renderer.constants._bus_start
             for i in range(len(trace)):
-                if (i % segment_size == 0) and i > 0:
-                    trace_line += segment_delim
-                trace_line += renderer.render_val(
-                    self._wires[wire],
-                    i % segment_size,
-                    trace[i],
-                    symbol_len,
-                    repr_func,
-                    repr_per_name)
-            return heading + trace_line
+                # There is no cycle change before the first cycle or after the
+                # last cycle, so the first and last cycles may have additional
+                # width. These additional widths make each cycle line up under
+                # the ruler, and appear the same length.
+                additional_symbol_len = 0
+                additional_cycle_len = 0
+                half_chars_between_cycles = (
+                    math.floor(renderer.constants._chars_between_cycles / 2))
+                if i == len(trace) - 1:
+                    additional_cycle_len = half_chars_between_cycles
+                if i == 0 or i == len(trace) - 1:
+                    additional_symbol_len = half_chars_between_cycles
+                first_trace_line += renderer.render_val(
+                    self._wires[wire], prior_val, trace[i],
+                    symbol_len + additional_symbol_len,
+                    cycle_len + additional_cycle_len, repr_func,
+                    repr_per_name, prev_line=True)
+                second_trace_line += renderer.render_val(
+                    self._wires[wire], prior_val, trace[i],
+                    symbol_len + additional_symbol_len,
+                    cycle_len + additional_cycle_len, repr_func,
+                    repr_per_name, prev_line=False)
+                prior_val = trace[i]
+            if is_bus:
+                second_trace_line += renderer.constants._bus_stop
+            heading_gap = ' ' * (maxnamelen + 1)
+            heading = wire.rjust(maxnamelen) + ' '
+            return (heading_gap + first_trace_line + '\n'
+                    + heading + second_trace_line)
 
         # default to printing all signals in sorted order
         if trace_list is None:
@@ -1298,19 +1636,13 @@ class SimulationTrace(object):
                 "if a CompiledSimulation was used.")
 
         if symbol_len is None:
-
-            def to_str(v, name):
-                f = repr_per_name.get(name)
-                if f is not None:
-                    return str(f(v))
-                else:
-                    return str(repr_func(v))
-
             maxvallen = 0
             for name, trace in self.trace.items():
-                maxvallen = max(maxvallen, max(len(to_str(v, name)) for v in trace))
-            symbol_len = maxvallen + 1
+                maxvallen = max(maxvallen, max(len(renderer.val_to_str(
+                    v, name, repr_func, repr_per_name)) for v in trace))
+            symbol_len = maxvallen
 
+        cycle_len = symbol_len + renderer.constants._chars_between_cycles
         # print the 'ruler' which is just a list of 'ticks'
         # mapped by the pretty map
 
@@ -1318,18 +1650,17 @@ class SimulationTrace(object):
         maxtracelen = max(len(v) for v in self.trace.values())
         if segment_size is None:
             segment_size = maxtracelen
-        spaces = ' ' * (maxnamelen + 1)
-        ticks = [renderer.tick_segment(n, symbol_len, segment_size)
+        spaces = ' ' * (maxnamelen)
+        ticks = [renderer.render_ruler_segment(n, cycle_len, segment_size,
+                                               maxtracelen)
                  for n in range(0, maxtracelen, segment_size)]
-        print(spaces + segment_delim.join(ticks), file=file)
+        print(spaces + ''.join(ticks), file=file)
 
         # now all the traces
-        for w in trace_list:
-            if extra_line:
-                print(file=file)
+        print(formatted_trace_line(trace_list[0], self.trace[trace_list[0]]),
+              file=file)
+        for w in trace_list[1:]:
             print(formatted_trace_line(w, self.trace[w]), file=file)
-        if extra_line:
-            print(file=file)
 
     def _set_initial_values(self, default_value, init_regvalue, init_memvalue):
         """ Remember the default values that were used when starting the trace.

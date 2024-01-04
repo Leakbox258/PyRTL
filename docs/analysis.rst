@@ -20,7 +20,6 @@ Estimation
 
 .. automodule:: pyrtl.analysis
    :members:
-   :show-inheritance:
    :special-members:
    :undoc-members:
    :exclude-members: __dict__,__weakref__,__module__
@@ -36,6 +35,7 @@ Synthesis
 .. autofunction:: pyrtl.passes.synthesize
 
 .. autoclass:: pyrtl.core.PostSynthBlock
+   :show-inheritance:
 
 Individual Passes
 -----------------

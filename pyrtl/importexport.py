@@ -617,6 +617,7 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
                 raise PyrtlError("%s formal parameter is neither an input nor output of subckt %s"
                                  % (formal, command['model_name']))
 
+
     def make_builtin(subckt):
 
         def twire(w):
@@ -633,10 +634,10 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
             outwire <<= ~twire('A')
         elif name == '$reduce_and':
             outwire = twire('Y')
-            outwire <<= rtl_all(twire('A'))
+            outwire <<= and_all_bits(twire('A'))
         elif name in ('$reduce_or', '$reduce_bool'):
             outwire = twire('Y')
-            outwire <<= rtl_any(twire('A'))
+            outwire <<= or_all_bits(twire('A'))
         elif name == '$reduce_xor':
             outwire = twire('Y')
             outwire <<= tree_reduce(lambda a, b: a ^ b, twire('A'))

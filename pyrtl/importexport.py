@@ -21,7 +21,7 @@ from abc import ABCMeta, abstractmethod
 from .pyrtlexceptions import PyrtlError, PyrtlInternalError
 from .core import working_block, _NameSanitizer
 from .wire import WireVector, Input, Output, Const, Register, next_tempvar_name
-from .corecircuits import concat_list, mux, rtl_all, rtl_any, tree_reduce, select
+from .corecircuits import concat_list, mux, or_all_bits, and_all_bits, rtl_all, rtl_any, tree_reduce, select
 from .corecircuits import shift_left_logical, shift_left_arithmetic
 from .corecircuits import shift_right_logical, shift_right_arithmetic
 from .memory import RomBlock
@@ -558,21 +558,21 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
         else:
             # NOTE: Not sure if we can save these in the models dictionary, since
             #       they differ by the number of internal wires (i.e. bitwidth).
-            if model_name in [
+            if model_name in (
                 '$not', '$pos', '$neg',
                 '$reduce_and', '$reduce_or', '$reduce_xor', '$reduce_xnor',
                 '$reduce_bool', '$logic_not'
-            ]:
+            ):
                 inputs, outputs = get_external_io(['A'], ['Y'])
-            elif model_name in [
+            elif model_name in (
                 '$and', '$or', '$xor', '$xnor',
                 '$shl', '$shr', '$sshl', '$sshr',
                 '$logic_and', '$logic_or', '$eqx', '$nex',
                 '$lt', '$le', '$eq', '$ne', '$ge', '$gt',
                 '$add', '$sub', '$mul', '$div', '$mod', '$pow'
-            ]:
+            ):
                 inputs, outputs = get_external_io(['A', 'B'], ['Y'])
-            elif model_name == '$mux':
+            elif model_name in ('$mux', '$pmux'):
                 inputs, outputs = get_external_io(['A', 'B', 'S'], ['Y'])
             elif model_name == '$dff':
                 inputs, outputs = get_external_io(['CLK', 'D'], ['Q'])
@@ -622,6 +622,10 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
         def twire(w):
             return subckt.twire(w)
 
+        def logical_truth(w):
+            # Just a descriptive name for getting the logical truthiness of a wire
+            return or_all_bits(w)
+
         name = subckt.model.model_name
 
         if name == '$not':
@@ -630,7 +634,7 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
         elif name == '$reduce_and':
             outwire = twire('Y')
             outwire <<= rtl_all(twire('A'))
-        elif name == '$reduce_or':
+        elif name in ('$reduce_or', '$reduce_bool'):
             outwire = twire('Y')
             outwire <<= rtl_any(twire('A'))
         elif name == '$reduce_xor':

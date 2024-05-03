@@ -38,6 +38,8 @@ from .helperfuncs import rtl_assert
 from .helperfuncs import check_rtl_assertions
 from .helperfuncs import find_loop
 from .helperfuncs import find_and_print_loop
+from .helperfuncs import wire_struct
+from .helperfuncs import wire_matrix
 
 from .corecircuits import and_all_bits
 from .corecircuits import or_all_bits
@@ -79,6 +81,7 @@ from .conditional import currently_under_condition
 from .simulation import Simulation
 from .simulation import FastSimulation
 from .simulation import SimulationTrace
+from .simulation import enum_name
 from .compilesim import CompiledSimulation
 
 # block visualization output formats

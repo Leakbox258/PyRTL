@@ -36,12 +36,12 @@ Wave Renderer
     :members:
     :special-members: __init__
     :exclude-members: render_ruler_segment, render_val, val_to_str
-.. autoclass:: pyrtl.simulation.RendererConstants
+.. autofunction:: pyrtl.simulation.enum_name
+.. autoclass:: pyrtl.simulation.PowerlineRendererConstants
+    :show-inheritance:
 .. autoclass:: pyrtl.simulation.Utf8RendererConstants
     :show-inheritance:
 .. autoclass:: pyrtl.simulation.Utf8AltRendererConstants
-    :show-inheritance:
-.. autoclass:: pyrtl.simulation.PowerlineRendererConstants
     :show-inheritance:
 .. autoclass:: pyrtl.simulation.Cp437RendererConstants
     :show-inheritance:

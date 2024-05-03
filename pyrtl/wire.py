@@ -10,10 +10,7 @@ Types defined in this file include:
 * `Register` -- a wire vector that is latched each cycle
 """
 
-from __future__ import print_function, unicode_literals
-
 import numbers
-import six
 import re
 import sys
 
@@ -69,7 +66,7 @@ class WireVector(object):
     Operation        Syntax            Function
     ===============  ================  =======================================================
     Addition         ``a + b``         Creates an adder, returns WireVector
-    Subtraction      ``a - b``         Subtraction (twos complement)
+    Subtraction      ``a - b``         Subtraction (two's complement)
     Multiplication   ``a * b``         Creates an multiplier, returns WireVector
     Xor              ``a ^ b``         Bitwise XOR, returns WireVector
     Or               ``a | b``         Bitwise OR, returns WireVector
@@ -134,7 +131,7 @@ class WireVector(object):
 
     @name.setter
     def name(self, value):
-        if not isinstance(value, six.string_types):
+        if not isinstance(value, str):
             raise PyrtlError('WireVector names must be strings')
         self._block.wirevector_by_name.pop(self._name, None)
         self._name = value
@@ -607,7 +604,7 @@ class Const(WireVector):
 
         :param int, bool, or str val: the value for the const WireVector
         :param int bitwidth: the desired bitwidth of the resulting const
-        :param bool signed: specify if bits should be used for twos complement
+        :param bool signed: specify if bits should be used for two's complement
         :return: a WireVector object representing a const wire
 
         Descriptions for all parameters not listed above can be found at
@@ -782,3 +779,159 @@ class Register(WireVector):
         self.reg_in = next
         net = LogicNet('r', None, args=(self.reg_in,), dests=(self,))
         working_block().add_net(net)
+
+
+class WrappedWireVector:
+    '''Wraps a WireVector. Forwards all method calls and attribute accesses.
+
+    WrappedWireVector is useful for dynamically choosing a WireVector base
+    class at runtime. If the base class is statically known, do not use
+    WrappedWireVector, and just inherit from the base class normally.
+
+    @wire_struct and wire_matrix use WrappedWireVector to implement the
+    ``concatenated_type`` option, so an instance can dynamically choose its
+    desired base class.
+
+    '''
+    wire = None
+
+    def __init__(self, wire: WireVector):
+        self.__dict__['wire'] = wire
+
+    def __getattr__(self, name: str):
+        '''Forward all attribute accesses to the wrapped WireVector.
+
+        This does not work for special methods like ``__hash__``. Special
+        methods are handled separately below.
+
+        '''
+        return getattr(self.wire, name)
+
+    def __setattr__(self, name, value):
+        '''Forward all attribute assignments to the wrapped WireVector.
+
+        This is needed to make ``reg.next <<= foo`` work, because that
+        expands to::
+
+            reg.next = reg.next.__ilshift__(foo)
+
+        And this attribute assignment must be forwarded to the underlying
+        Register.
+
+        '''
+        self.wire.__setattr__(name, value)
+
+    def __hash__(self):
+        return hash(self.wire)
+
+    def __str__(self):
+        return str(self.wire)
+
+    def __ilshift__(self, other):
+        self.wire <<= other
+        return self
+
+    def __ior__(self, other):
+        self.wire |= other
+        return self
+
+    def __bool__(self):
+        return bool(self.wire)
+
+    def __and__(self, other):
+        return self.wire & other
+
+    def __rand__(self, other):
+        return other & self.wire
+
+    def __iand__(self, other):
+        self.wire &= other
+        return self
+
+    def __or__(self, other):
+        return self.wire | other
+
+    def __ror__(self, other):
+        return other | self.wire
+
+    def __xor__(self, other):
+        return self.wire ^ other
+
+    def __rxor__(self, other):
+        return other ^ self.wire
+
+    def __ixor__(self, other):
+        self.wire ^= other
+        return self
+
+    def __add__(self, other):
+        return self.wire + other
+
+    def __radd__(self, other):
+        return other + self.wire
+
+    def __iadd__(self, other):
+        self.wire += other
+        return self
+
+    def __sub__(self, other):
+        return self.wire - other
+
+    def __rsub__(self, other):
+        return other - self.wire
+
+    def __isub__(self, other):
+        self.wire -= other
+        return self
+
+    def __mul__(self, other):
+        return self.wire * other
+
+    def __rmul__(self, other):
+        return other * self.wire
+
+    def __imul__(self, other):
+        self.wire *= other
+        return self
+
+    def __lt__(self, other):
+        return self.wire < other
+
+    def __le__(self, other):
+        return self.wire <= other
+
+    def __eq__(self, other):
+        return self.wire == other
+
+    def __ne__(self, other):
+        return self.wire != other
+
+    def __gt__(self, other):
+        return self.wire > other
+
+    def __ge__(self, other):
+        return self.wire >= other
+
+    def __invert__(self):
+        return ~self.wire
+
+    def __getitem__(self, item):
+        return self.wire[item]
+
+    def __lshift__(self, other):
+        return self.wire << other
+
+    def __rshift__(self, other):
+        return self.wire >> other
+
+    def __mod__(self, other):
+        return self.wire % other
+
+    def __len__(self):
+        return len(self.wire)
+
+    def __enter__(self):
+        self.wire.__enter__()
+
+    def __exit__(self, *execinfo):
+        self.wire.__exit__(*execinfo)

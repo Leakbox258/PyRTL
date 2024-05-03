@@ -6,13 +6,11 @@ The functions provided either read the file and update the Block
 accordingly, or write information from the Block out to the file.
 """
 
-from __future__ import print_function, unicode_literals
 import re
 import collections
 import tempfile
 import os
 import subprocess
-import six
 import sys
 import functools
 import operator
@@ -166,16 +164,15 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
     It currently ignores the reset signal (which it assumes is input only to the flip flops).
     """
     import pyparsing
-    import six
     from pyparsing import (Word, Literal, OneOrMore, ZeroOrMore,
-                           Suppress, Group, Keyword, Optional, oneOf)
+                           Suppress, Group, Keyword, Opt, one_of)
 
     block = working_block(block)
 
     try:
         blif_string = blif.read()
     except AttributeError:
-        if isinstance(blif, six.string_types):
+        if isinstance(blif, str):
             blif_string = blif
         else:
             raise PyrtlError('input_from_blif expecting either open file or string')
@@ -223,14 +220,14 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
     # (a)synchronous Flip-flop (positive/negative polarity reset/set/enable)
     dffs_formal = (SLiteral('C=') + signal_id('C')
                    + SLiteral('D=') + signal_id('D')
-                   + Optional(SLiteral('E=') + signal_id('E'))
+                   + Opt(SLiteral('E=') + signal_id('E'))
                    + SLiteral('Q=') + signal_id('Q')
-                   + Optional(SLiteral('S=') + signal_id('S'))
-                   + Optional(SLiteral('R=') + signal_id('R')))
+                   + Opt(SLiteral('S=') + signal_id('S'))
+                   + Opt(SLiteral('R=') + signal_id('R')))
     dffs_def = make_dff_parsers(dffs_formal, dff_names)
 
     # synchronous Flip-flop (using .latch format)
-    latches_init_val = Optional(oneOf('0 1 2 3'), default='0')
+    latches_init_val = Opt(one_of('0 1 2 3'), default='0')
     # TODO I think <type> and <control> ('re' and 'C') below are technically optional too
     latches_def = Group(SKeyword('.latch')
                         + signal_id('D')
@@ -255,7 +252,7 @@ def input_from_blif(blif, block=None, merge_io_vectors=True, clock_name='clk', t
     parser = model_list.ignore(pyparsing.pythonStyleComment)
 
     # Begin actually reading and parsing the BLIF file
-    result = parser.parseString(blif_string, parseAll=True)
+    result = parser.parse_string(blif_string, parseAll=True)
     ff_clk_set = set([])
     models = {}  # model name -> model, for subckt instantiation
 
@@ -813,7 +810,7 @@ def input_from_verilog(verilog, clock_name='clk', toplevel=None, leave_in_dir=No
     try:
         verilog_string = verilog.read()
     except AttributeError:
-        if isinstance(verilog, six.string_types):
+        if isinstance(verilog, str):
             verilog_string = verilog
         else:
             raise PyrtlError('input_from_verilog expecting either open file or string')
@@ -1498,15 +1495,15 @@ def input_from_iscas_bench(bench, block=None):
     '''
 
     import pyparsing
-    import six
-    from pyparsing import (Word, Literal, OneOrMore, ZeroOrMore, Suppress, Group, Keyword, oneOf)
+    from pyparsing import (Word, Literal, OneOrMore, ZeroOrMore,
+                           Suppress, Group, Keyword, one_of)
 
     block = working_block(block)
 
     try:
         bench_string = bench.read()
     except AttributeError:
-        if isinstance(bench, six.string_types):
+        if isinstance(bench, str):
             bench_string = bench
         else:
             raise PyrtlError('input_from_bench expecting either open file or string')
@@ -1526,7 +1523,7 @@ def input_from_iscas_bench(bench, block=None):
     gate_names = "AND OR NAND NOR XOR NOT BUFF DFF"
 
     src_list = Group(signal_id + ZeroOrMore(SLiteral(",") + signal_id))("src_list")
-    net_def = Group(signal_id("dst") + SLiteral("=") + oneOf(gate_names)("gate")
+    net_def = Group(signal_id("dst") + SLiteral("=") + one_of(gate_names)("gate")
                     + SLiteral("(") + src_list + SLiteral(")"))("net_def")
 
     input_def = Group(SKeyword("INPUT") + SLiteral("(")

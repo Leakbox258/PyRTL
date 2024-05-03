@@ -1,13 +1,11 @@
 """ Some useful hardware generators (e.g. muxes, signed multipliers, etc.)  """
 
-from __future__ import division
-
-import six
+import itertools
 import math
 
 from .pyrtlexceptions import PyrtlError, PyrtlInternalError
 from .core import LogicNet, working_block
-from .wire import Const, WireVector
+from .wire import Const, WireVector, WrappedWireVector
 from pyrtl.rtllib import barrel
 from pyrtl.rtllib import muxes
 from .conditional import otherwise
@@ -175,7 +173,7 @@ def signed_add(a, b):
 
         max(n, m) + 1
 
-    The inputs are twos complement sign extended to the same length before
+    The inputs are two's complement sign extended to the same length before
     adding.  If an integer is passed to either `a` or `b`, it will be converted
     automatically to a two's complement constant
 
@@ -347,7 +345,7 @@ def match_bitwidth(*args, **opt):
     :return: tuple of args in order with extended bits
 
     Example of matching the bitwidths of two WireVectors ``a`` and ``b`` with
-    with zero extension: ::
+    zero extension: ::
 
         a, b = match_bitwidth(a, b)
 
@@ -400,13 +398,15 @@ def as_wires(val, bitwidth=None, truncating=True, block=None):
     from .memory import _MemIndexed
     block = working_block(block)
 
-    if isinstance(val, (int, six.string_types)):
+    if isinstance(val, (int, str)):
         # note that this case captures bool as well (as bools are instances of ints)
         return Const(val, bitwidth=bitwidth, block=block)
     elif isinstance(val, _MemIndexed):
         # convert to a memory read when the value is actually used
         if val.wire is None:
             val.wire = as_wires(val.mem._readaccess(val.index), bitwidth, truncating, block)
+        return val.wire
+    elif isinstance(val, WrappedWireVector):
         return val.wire
     elif not isinstance(val, WireVector):
         raise PyrtlError('error, expecting a wirevector, int, or verilog-style '
@@ -706,8 +706,7 @@ def _basic_mult(A, B):
                 deferred[i].extend(w_array)
         bits = deferred[:result_bitwidth]
 
-    import six
-    add_wires = tuple(six.moves.zip_longest(*bits, fillvalue=Const(0)))
+    add_wires = tuple(itertools.zip_longest(*bits, fillvalue=Const(0)))
     adder_result = concat_list(add_wires[0]) + concat_list(add_wires[1])
     return adder_result[:result_bitwidth]
 

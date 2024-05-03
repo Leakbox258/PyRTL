@@ -1,20 +1,21 @@
 """Classes for executing and tracing circuit simulations."""
 
-from __future__ import print_function
+from __future__ import annotations
 
 import copy
 import math
 import numbers
 import os
 import re
-import six
 import sys
+import typing
 
 from .pyrtlexceptions import PyrtlError, PyrtlInternalError
 from .core import working_block, PostSynthBlock, _PythonSanitizer
 from .wire import Input, Register, Const, Output, WireVector
 from .memory import RomBlock
 from .helperfuncs import check_rtl_assertions, _currently_in_jupyter_notebook
+from .helperfuncs import val_to_signed_integer
 from .importexport import _VerilogSanitizer
 
 try:
@@ -65,7 +66,7 @@ class Simulation(object):
 
     simple_func = {  # OPS
         'w': lambda x: x,
-        '~': lambda x: ~x,
+        '~': lambda x: ~int(x),
         '&': lambda left, right: left & right,
         '|': lambda left, right: left | right,
         '^': lambda left, right: left ^ right,
@@ -739,7 +740,7 @@ class FastSimulation(object):
                 "each step of simulation")
 
         def to_num(v):
-            if isinstance(v, six.string_types):
+            if isinstance(v, str):
                 # Don't use infer_val_and_bitwidth because they aren't in
                 # Verilog-style format, but are instead in plain decimal.
                 return int(v)
@@ -986,7 +987,6 @@ class FastSimulation(object):
 #     |  |  \ /~~\ \__, |___
 #
 
-
 class WaveRenderer(object):
     """Render a SimulationTrace to the terminal.
 
@@ -1014,14 +1014,13 @@ class WaveRenderer(object):
         :param segment_size: Length between major tick marks, in cycles.
         :param maxtracelen: Length of the longest trace, in cycles.
         """
-        # Render a major tick mark followed by its label (n).
+        # Render a major tick mark followed by the cycle number (n).
         major_tick = self.constants._tick + str(n)
-        # Number of cycles occupied by major_tick.
-        major_tick_cycles = math.ceil(len(major_tick) / cycle_len)
-        # If major_tick can't fit in segment_size, drop most significant digits
-        # until it fits.
-        if major_tick_cycles > segment_size:
-            major_tick = self.constants._tick + major_tick[:segment_size - 1]
+        # If the cycle number can't fit in this segment, drop most significant
+        # digits of the cycle number until it fits.
+        excess_characters = len(major_tick) - cycle_len * segment_size
+        if excess_characters > 0:
+            major_tick = self.constants._tick + str(n)[excess_characters:]
 
         # Do not render past maxtracelen.
         if n + segment_size >= maxtracelen:
@@ -1030,14 +1029,15 @@ class WaveRenderer(object):
         ticks = major_tick.ljust(cycle_len * segment_size)
         return ticks
 
-    def val_to_str(self, value, wire_name, repr_func, repr_per_name):
+    def val_to_str(self, value: int, wire: WireVector,
+                   repr_func: typing.Callable, repr_per_name: dict) -> str:
         """Return a string representing 'value'.
 
         :param value: The value to convert to string.
-        :param wire_name: Name of the wire that produced this value.
+        :param wire: Wire that produced this value.
         :param repr_func: function to use for representing the current_val;
-            examples are 'hex', 'oct', 'bin', 'str' (for decimal), or even the name
-            of an IntEnum class you know the value will belong to. Defaults to 'hex'.
+            examples are 'hex', 'oct', 'bin', 'str' (for decimal), or
+            the function returned by :py:func:`enum_name`. Defaults to 'hex'.
         :param repr_per_name: Map from signal name to a function that takes in the signal's
             value and returns a user-defined representation. If a signal name is
             not found in the map, the argument `repr_func` will be used instead.
@@ -1045,14 +1045,21 @@ class WaveRenderer(object):
         :return: a string representing 'value'.
 
         """
-        f = repr_per_name.get(wire_name)
+        f = repr_per_name.get(wire.name)
+
+        def invoke_f(f, value):
+            if f is val_to_signed_integer:
+                return str(val_to_signed_integer(value=value,
+                                                 bitwidth=wire.bitwidth))
+            else:
+                return str(f(value))
         if f is not None:
-            return str(f(value))
+            return invoke_f(f, value)
         else:
-            return str(repr_func(value))
+            return invoke_f(repr_func, value)
 
     def render_val(self, w, prior_val, current_val, symbol_len, cycle_len,
-                   repr_func, repr_per_name, prev_line):
+                   repr_func, repr_per_name, prev_line, is_last):
         """Return a string encoding the given value in a waveform.
 
         :param w: The WireVector we are rendering to a waveform
@@ -1062,8 +1069,8 @@ class WaveRenderer(object):
         :param symbol_len: Width of each value, in characters.
         :param cycle_len: Width of each cycle, in characters.
         :param repr_func: function to use for representing the current_val;
-            examples are 'hex', 'oct', 'bin', 'str' (for decimal), or even the name
-            of an IntEnum class you know the value will belong to. Defaults to 'hex'.
+            examples are 'hex', 'oct', 'bin', 'str' (for decimal), or
+            the function returned by :py:func:`enum_name`. Defaults to 'hex'.
         :param repr_per_name: Map from signal name to a function that takes in the signal's
             value and returns a user-defined representation. If a signal name is
             not found in the map, the argument `repr_func` will be used instead.
@@ -1075,7 +1082,18 @@ class WaveRenderer(object):
         representation of current_val.  The input prior_val is used to
         render transitions.
         """
-        if len(w) > 1:
+        if len(w) > 1 or w.name in repr_per_name:
+            # Render values in boxes for multi-bit wires ("bus"), or single-bit
+            # wires with a specific representation.
+            #
+            # We display multi-wire zero values as a centered horizontal line
+            # when a specific `repr_per_name` is not requested for this trace,
+            # and a standard numeric format is requested.
+            flat_zero = (w.name not in repr_per_name
+                         and (repr_func is hex or repr_func is oct
+                              or repr_func is int or repr_func is str
+                              or repr_func is bin
+                              or repr_func is val_to_signed_integer))
             if prev_line:
                 # Bus wires are currently never rendered across multiple lines.
                 return ''
@@ -1083,13 +1101,37 @@ class WaveRenderer(object):
             out = ''
             if current_val != prior_val:
                 if prior_val is not None:
-                    out += self.constants._x
-                out += (self.val_to_str(current_val, w.name, repr_func,
-                                        repr_per_name).rstrip('L')
-                        .ljust(symbol_len)[:symbol_len])
+                    if flat_zero and prior_val == 0:
+                        # Value changed from zero to non-zero.
+                        out += self.constants._zero_x
+                    elif flat_zero and current_val == 0:
+                        # Value changed from non-zero to zero.
+                        out += self.constants._x_zero
+                    else:
+                        # Value changed from non-zero to non-zero.
+                        out += self.constants._x
+                if flat_zero and current_val == 0:
+                    # Display the current zero value.
+                    out += self.constants._zero * symbol_len
+                else:
+                    if prior_val is None:
+                        out += self.constants._bus_start
+                    # Display the current non-zero value.
+                    out += (self.val_to_str(current_val, w, repr_func,
+                                            repr_per_name).rstrip('L')
+                            .ljust(symbol_len)[:symbol_len])
+                    if is_last:
+                        out += self.constants._bus_stop
+            elif flat_zero and current_val == 0:
+                # Extend an unchanged zero value into the current cycle.
+                out += self.constants._zero * cycle_len
             else:
+                # Extend an unchanged non-zero value into the current cycle.
                 out += ' ' * cycle_len
+                if is_last:
+                    out += self.constants._bus_stop
         else:
+            # Render lines for single-bit wires.
             if prev_line:
                 low = self.constants._prev_line_low
                 high = self.constants._prev_line_high
@@ -1151,13 +1193,29 @@ class RendererConstants():
     # rendering a bus wire. _bus_start and _bus_stop must have zero display
     # length characters. Escape codes never count towards display length.
     _bus_start, _bus_stop = '', ''
-    # Print _x when a bus wire changes value. _low must have display length
-    # of _chars_between_cycles characters.
+
+    # Print _x when a bus wire changes from one non-zero value to another
+    # non-zero value. _x must have display length of _chars_between_cycles
+    # characters.
     _x = ''
 
+    # Print _zero_x when a bus wire changes from a zero value to a non-zero
+    # value. _zero_x must have display length of _chars_between_cycles
+    # characters.
+    _zero_x = ''
+
+    # Print _x_zero when a bus wire changes from a non-zero value to a zero
+    # value. _x_zero must have display length of _chars_between_cycles
+    # characters.
+    _x_zero = ''
+
+    # Print _zero when a bus wire maintains a zero value. _zero must have
+    # display length of 1 character.
+    _zero = ''
+
     # Number of characters between cycles. The cycle changes halfway between
-    # this width. The first half of this width belongs to the previous cycle and
-    # the second half of this width belongs to the next cycle.
+    # this width. The first half of this width belongs to the previous cycle
+    # and the second half of this width belongs to the next cycle.
     _chars_between_cycles = 0
 
 
@@ -1173,7 +1231,7 @@ class Utf8RendererConstants(RendererConstants):
     Enable this renderer by default by setting the ``PYRTL_RENDERER``
     environment variable to ``utf-8``.
 
-    .. image:: ../docs/screenshots/pyrtl-statemachine-utf-8.png
+    .. image:: ../docs/screenshots/pyrtl-renderer-demo-utf-8.png
 
     """
     # Start reverse-video, reset all attributes
@@ -1188,6 +1246,9 @@ class Utf8RendererConstants(RendererConstants):
     _prev_line_low, _prev_line_high = ' ', '▁'
 
     _x = '▕ '
+    _zero_x = '─' + _bus_start + '▏'
+    _x_zero = '▕' + _bus_stop + '─'
+    _zero = '─'
 
     # Number of characters needed between cycles. The cycle changes halfway
     # between this width (2), so the first character belongs to the previous
@@ -1202,13 +1263,13 @@ class Utf8AltRendererConstants(RendererConstants):
     falling edges. Multi-bit WireVector values are rendered in reverse-video
     rectangles.
 
-    Compared to Utf8RendererConstants, this renderer is more compact because it
-    uses one character between cycles instead of two.
+    Compared to :py:class:`Utf8RendererConstants`, this renderer is more
+    compact because it uses one character between cycles instead of two.
 
     Enable this renderer by default by setting the ``PYRTL_RENDERER``
     environment variable to ``utf-8-alt``.
 
-    .. image:: ../docs/screenshots/pyrtl-statemachine-utf-8-alt.png
+    .. image:: ../docs/screenshots/pyrtl-renderer-demo-utf-8-alt.png
 
     """
     # Start reverse-video, reset all attributes
@@ -1219,7 +1280,10 @@ class Utf8AltRendererConstants(RendererConstants):
     _up, _down = '╱', '╲'
     _low, _high = '▁', '▔'
 
-    _x = '┃'
+    _x = _bus_stop + ' ' + _bus_start
+    _zero_x = ' ' + _bus_start
+    _x_zero = _bus_stop + ' '
+    _zero = '─'
 
     # Number of characters needed between cycles. The cycle changes halfway
     # between this width (1), so the first character belongs to the previous
@@ -1241,13 +1305,16 @@ class PowerlineRendererConstants(Utf8RendererConstants):
     Enable this renderer by default by setting the ``PYRTL_RENDERER``
     environment variable to ``powerline``.
 
-    .. image:: ../docs/screenshots/pyrtl-statemachine.png
+    .. image:: ../docs/screenshots/pyrtl-renderer-demo-powerline.png
 
     """
     # Start reverse-video, reset all attributes
     _bus_start, _bus_stop = '\x1B[7m', '\x1B[0m'
 
     _x = _bus_stop + '' + _bus_start
+    _zero_x = '─' + _bus_start
+    _x_zero = _bus_stop + '─'
+    _zero = '─'
 
 
 class Cp437RendererConstants(RendererConstants):
@@ -1260,14 +1327,14 @@ class Cp437RendererConstants(RendererConstants):
     `Code page 437 <https://en.wikipedia.org/wiki/Code_page_437>`_ is also
     known as 8-bit ASCII. This is the default renderer on Windows platforms.
 
-    Compared to Utf8RendererConstants, this renderer is more compact because it
-    uses one character between cycles instead of two, but the wire names are
-    vertically aligned at the bottom of each waveform.
+    Compared to :py:class:`Utf8RendererConstants`, this renderer is more
+    compact because it uses one character between cycles instead of two, but
+    the wire names are vertically aligned at the bottom of each waveform.
 
     Enable this renderer by default by setting the ``PYRTL_RENDERER``
     environment variable to ``cp437``.
 
-    .. image:: ../docs/screenshots/pyrtl-statemachine-cp437.png
+    .. image:: ../docs/screenshots/pyrtl-renderer-demo-cp437.png
 
     """
     _tick = '│'
@@ -1279,6 +1346,9 @@ class Cp437RendererConstants(RendererConstants):
     _prev_line_low, _prev_line_high = ' ', '─'
 
     _x = '│'
+    _zero_x = '┤'
+    _x_zero = '├'
+    _zero = '─'
 
     _chars_between_cycles = 1
 
@@ -1293,7 +1363,7 @@ class AsciiRendererConstants(RendererConstants):
     Enable this renderer by default by setting the ``PYRTL_RENDERER``
     environment variable to ``ascii``.
 
-    .. image:: ../docs/screenshots/pyrtl-statemachine-ascii.png
+    .. image:: ../docs/screenshots/pyrtl-renderer-demo-ascii.png
 
     """
     _tick = '|'
@@ -1302,6 +1372,9 @@ class AsciiRendererConstants(RendererConstants):
     _low, _high = '_', '-'
 
     _x = '|'
+    _zero_x = '|'
+    _x_zero = '|'
+    _zero = '-'
 
     _chars_between_cycles = 1
 
@@ -1530,27 +1603,36 @@ class SimulationTrace(object):
         file.flush()
 
     def render_trace(
-            self, trace_list=None, file=sys.stdout, renderer=default_renderer(),
-            symbol_len=None, repr_func=hex, repr_per_name={}, segment_size=1):
+            self, trace_list: list[str] = None, file=sys.stdout,
+            renderer: WaveRenderer = default_renderer(), symbol_len: int = None,
+            repr_func: typing.Callable = hex, repr_per_name: dict = {},
+            segment_size: int = 1):
 
-        """ Render the trace to a file using unicode and ASCII escape sequences.
+        """Render the trace to a file using unicode and ASCII escape sequences.
 
-        :param list[str] trace_list: A list of signal names to be output in the specified order.
+        :param trace_list: A list of signal names to be output in the specified
+            order.
         :param file: The place to write output, default to stdout.
-        :param WaveRenderer renderer: An object that translates traces into output bytes.
-        :param int symbol_len: The "length" of each rendered value in characters.
-            If None, the length will be automatically set such that the largest
-            represented value fits.
-        :param repr_func: Function to use for representing each value in the trace;
-            examples are ``hex``, ``oct``, ``bin``, and ``str`` (for decimal). Defaults to ``hex``.
-        :param repr_per_name: Map from signal name to a function that takes in the signal's
-            value and returns a user-defined representation. If a signal name is
-            not found in the map, the argument `repr_func` will be used instead.
-        :param int segment_size: Traces are broken in the segments of this number of cycles.
+        :param renderer: An object that translates traces into output bytes.
+        :param symbol_len: The "length" of each rendered value in characters.
+            If ``None``, the length will be automatically set such that the
+            largest represented value fits.
+        :param repr_func: Function to use for representing each value in the
+            trace. Examples include ``hex``, ``oct``, ``bin``, and ``str`` (for
+            decimal), :py:func:`.val_to_signed_integer` (for signed decimal) or
+            the function returned by :py:func:`enum_name` (for ``IntEnum``).
+            Defaults to ``hex``.
+        :param repr_per_name: Map from signal name to a function that takes in
+            the signal's value and returns a user-defined representation. If a
+            signal name is not found in the map, the argument ``repr_func``
+            will be used instead.
+        :param segment_size: Traces are broken in the segments of this number
+            of cycles.
 
         The resulting output can be viewed directly on the terminal or looked
-        at with :program:`more` or :program:`less -R` which both should handle the ASCII escape
-        sequences used in rendering.
+        at with :program:`more` or :program:`less -R` which both should handle
+        the ASCII escape sequences used in rendering.
+
         """
         if _currently_in_jupyter_notebook():
             from IPython.display import display, HTML, Javascript  # pylint: disable=import-error
@@ -1583,9 +1665,6 @@ class SimulationTrace(object):
             first_trace_line = ''
             second_trace_line = ''
             prior_val = None
-            is_bus = len(self._wires[wire]) > 1
-            if is_bus:
-                second_trace_line += renderer.constants._bus_start
             for i in range(len(trace)):
                 # There is no cycle change before the first cycle or after the
                 # last cycle, so the first and last cycles may have additional
@@ -1595,23 +1674,23 @@ class SimulationTrace(object):
                 additional_cycle_len = 0
                 half_chars_between_cycles = (
                     math.floor(renderer.constants._chars_between_cycles / 2))
-                if i == len(trace) - 1:
+                is_first = i == 0
+                is_last = i == len(trace) - 1
+                if is_last:
                     additional_cycle_len = half_chars_between_cycles
-                if i == 0 or i == len(trace) - 1:
+                if is_first or is_last:
                     additional_symbol_len = half_chars_between_cycles
                 first_trace_line += renderer.render_val(
                     self._wires[wire], prior_val, trace[i],
                     symbol_len + additional_symbol_len,
                     cycle_len + additional_cycle_len, repr_func,
-                    repr_per_name, prev_line=True)
+                    repr_per_name, prev_line=True, is_last=is_last)
                 second_trace_line += renderer.render_val(
                     self._wires[wire], prior_val, trace[i],
                     symbol_len + additional_symbol_len,
                     cycle_len + additional_cycle_len, repr_func,
-                    repr_per_name, prev_line=False)
+                    repr_per_name, prev_line=False, is_last=is_last)
                 prior_val = trace[i]
-            if is_bus:
-                second_trace_line += renderer.constants._bus_stop
             heading_gap = ' ' * (maxnamelen + 1)
             heading = wire.rjust(maxnamelen) + ' '
             return (heading_gap + first_trace_line + '\n'
@@ -1634,18 +1713,23 @@ class SimulationTrace(object):
                 "if a CompiledSimulation was used.")
 
         if symbol_len is None:
-            maxvallen = 0
-            for name, trace in self.trace.items():
-                maxvallen = max(maxvallen, max(len(renderer.val_to_str(
-                    v, name, repr_func, repr_per_name)) for v in trace))
-            symbol_len = maxvallen
+            max_symbol_len = 0
+            for trace_name in trace_list:
+                trace = self.trace[trace_name]
+                current_symbol_len = max(
+                    len(renderer.val_to_str(
+                        v, self._wires[trace_name], repr_func, repr_per_name))
+                    for v in trace)
+                max_symbol_len = max(max_symbol_len, current_symbol_len)
+            symbol_len = max_symbol_len
 
         cycle_len = symbol_len + renderer.constants._chars_between_cycles
+
         # print the 'ruler' which is just a list of 'ticks'
         # mapped by the pretty map
-
-        maxnamelen = max(len(w) for w in trace_list)
-        maxtracelen = max(len(v) for v in self.trace.values())
+        maxnamelen = max(len(trace_name) for trace_name in trace_list)
+        maxtracelen = max(len(self.trace[trace_name])
+                          for trace_name in trace_list)
         if segment_size is None:
             segment_size = maxtracelen
         spaces = ' ' * (maxnamelen)
@@ -1655,10 +1739,9 @@ class SimulationTrace(object):
         print(spaces + ''.join(ticks), file=file)
 
         # now all the traces
-        print(formatted_trace_line(trace_list[0], self.trace[trace_list[0]]),
-              file=file)
-        for w in trace_list[1:]:
-            print(formatted_trace_line(w, self.trace[w]), file=file)
+        for trace_name in trace_list:
+            print(formatted_trace_line(trace_name, self.trace[trace_name]),
+                  file=file)
 
     def _set_initial_values(self, default_value, init_regvalue, init_memvalue):
         """ Remember the default values that were used when starting the trace.
@@ -1674,3 +1757,64 @@ class SimulationTrace(object):
         self.default_value = default_value
         self.init_regvalue = init_regvalue
         self.init_memvalue = init_memvalue
+
+    def print_perf_counters(self, *trace_names, file=sys.stdout):
+        """Print performance counter statistics for `trace_names`.
+
+        :param str trace_names: List of trace names. Each trace must be a
+            single-bit wire.
+        :param file: The place to write output, defaults to stdout.
+
+        This function prints the number of cycles where each trace's value is
+        one. This is useful for counting the number of times important events
+        occur in a simulation, such as cache misses and branch mispredictions.
+
+        """
+        name_values = []
+        for trace_name in trace_names:
+            wire_length = len(self._wires[trace_name])
+            if wire_length != 1:
+                raise PyrtlError(
+                    'print_perf_counters can only be used with single-bit '
+                    f'wires but wire {trace_name} has bitwidth {wire_length}')
+
+            name_values.append([trace_name, str(sum(self.trace[trace_name]))])
+
+        max_name_length = max(len(name) for name, value in name_values)
+        max_value_length = max(len(value) for name, value in name_values)
+        for name, value in name_values:
+            print(name.rjust(max_name_length),
+                  value.rjust(max_value_length),
+                  file=file)
+
+
+def enum_name(EnumClass: type) -> typing.Callable[[int], str]:
+    '''Returns a function that returns the name of an enum value as a string.
+
+    Use ``enum_name`` as a ``repr_func`` or ``repr_per_name`` for
+    :py:meth:`SimulationTrace.render_trace` to display enum names, instead of
+    their numeric value, in traces. Example::
+
+        class State(enum.IntEnum):
+            FOO = 0
+            BAR = 1
+        state = Input(name='state', bitwidth=1)
+        sim = Simulation()
+        sim.step_multiple({'state': [State.FOO, State.BAR]})
+
+        # Generates a trace like:
+        #      │0  │1
+        #
+        # state FOO│BAR
+        sim.tracer.render_trace(repr_per_name={'state': enum_name(State)})
+
+    :param EnumClass: ``enum`` to convert. This is the enum class, like
+                      ``State``, not an enum value, like ``State.FOO`` or
+                      ``1``.
+    :return: A function that accepts an enum value, like ``State.FOO`` or
+             ``1``, and returns the value's name as a string, like ``'FOO'``.
+
+    '''
+    def value_to_name(value: int) -> str:
+        return EnumClass(value).name
+    return value_to_name

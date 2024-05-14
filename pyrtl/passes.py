@@ -500,7 +500,7 @@ def synthesize(update_working_block=True, merge_io_vectors=True, block=None):
 
     block_out = PostSynthBlock()
     # resulting block should only have one of a restricted set of net ops
-    block_out.legal_ops = set('~&|^nrwm@')
+    block_out.legal_ops = set('~&|^rwm@')
     if merge_io_vectors:
         block_out.legal_ops.update(set('cs'))
     wirevector_map = {}  # map from (vector,index) -> new_wire
@@ -513,6 +513,7 @@ def synthesize(update_working_block=True, merge_io_vectors=True, block=None):
                 ('-', _basic_sub),
                 ('x', _basic_select),
                 ('=', _basic_eq),
+                ('n', lambda a,b: ~(a & b)),
                 ('<', _basic_lt),
                 ('>', _basic_gt)]:
             net_transform(_replace_op(op, fun), block_in)

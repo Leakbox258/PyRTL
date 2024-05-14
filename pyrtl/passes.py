@@ -446,7 +446,7 @@ def _remove_unused_wires(block, keep_inputs=True):
                 valid_wires.add(removed_wire)
                 term = " deemed useless by optimization"
 
-            print("Input Wire, " + removed_wire.name + " has been" + term)
+            # print("Input Wire, " + removed_wire.name + " has been" + term)
         if isinstance(removed_wire, Output):
             PyrtlInternalError("Output wire, " + removed_wire.name + " not driven")
 

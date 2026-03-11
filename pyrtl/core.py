@@ -738,7 +738,7 @@ class Block(object):
             find_and_print_loop(self)
             raise PyrtlError("Failure in Block Iterator due to non-register loops")
 
-    def sanity_check(self):
+    def sanity_check(self, wire_sort_only=False):
         """ Check block and throw PyrtlError or PyrtlInternalError if there is an issue.
 
         Should not modify anything, only check data structures to make sure they have been
@@ -768,6 +768,13 @@ class Block(object):
                              'different signals: %s (make sure you are not using "tmp" '
                              'or "const_" as a signal name because those are reserved for '
                              'internal use)' % repr(wirevector_names_list))
+
+        # Verify that all module interconnections are valid
+        # WireSort Entry:
+        check_module_interconnections()
+        if wire_sort_only:
+            # Early ending to get more precise time
+            return
 
         # check for dead input wires (not connected to anything)
         all_input_and_consts = self.wirevector_subset((Input, Const))
@@ -800,9 +807,6 @@ class Block(object):
 
         # Check for async memories not specified as such
         self.sanity_check_memory_sync(wire_src_dict)
-
-        # Verify that all module interconnections are valid
-        check_module_interconnections()
 
         if debug_mode:
             # Check for wires that are destinations of a logicNet, but are not outputs and are never

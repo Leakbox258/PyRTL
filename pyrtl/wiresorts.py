@@ -197,10 +197,11 @@ def check_module_interconnections(supermodule=None, stop_after_first_loop=False,
 
     if bad_connections:
         raise PyrtlError(
-            'Invalid intermodular connections detected in "%s":\n%s'
+            'Invalid intermodular connections detected in "%s":\n%s\nFind Bad Connections: %d'
             % (supermodule.name if supermodule else "Top",
                "\n".join("(%s -> %s)" % (str(output), str(input))
-                         for (output, input) in bad_connections))
+                         for (output, input) in bad_connections),
+               len(bad_connections))
         )
 
 
